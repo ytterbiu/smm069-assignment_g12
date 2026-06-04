@@ -1,5 +1,5 @@
 ---
-title: "TBI"
+title: "Shrinkage Estimation in Finance and Insurance: Portfolio Construction and Claim Severity Modelling"
 subtitle: "SMM069 (2025-26) Group Coursework - Group 12"
 author:
   - "Gaurav Agrawal"
@@ -16,7 +16,7 @@ output:
     toc_depth: 3
     number_sections: true
     code_folding: hide
-    theme: united
+    theme: paper
     highlight: tango
     df_print: paged
   # runtime: shiny
@@ -279,6 +279,18 @@ note: want separate R states / instances to allow for no mixing/matching of
 variables
 
 ## Sub section 2 (want B1 or A1)
+
+```{r, echo=FALSE, include=FALSE}
+u <- 2.3212
+d <- 3.113131
+```
+
+<!-- prettier-ignore -->
+::: {.answer-wrapper}
+::: {.answer}
+$u=`r formatC(u, format="f", digits=5)`, \quad d=`r formatC(d, format="f", digits=5)`$
+:::
+:::
 
 ### Sub section 3
 
