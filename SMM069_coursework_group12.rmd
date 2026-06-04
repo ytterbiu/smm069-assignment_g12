@@ -278,6 +278,9 @@ format_spaced_6dp <- function(x) {
 note: want separate R states / instances to allow for no mixing/matching of
 variables
 
+> Read in 
+> follow Practice session 1 code
+
 ## Sub section 2 (want B1 or A1)
 
 ```{r, echo=FALSE, include=FALSE}

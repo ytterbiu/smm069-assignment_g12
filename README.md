@@ -1,4 +1,4 @@
-# MSc Electives - Term 3: SMM069 Advanced Predictive Analytics — Group Project
+# MSc Term 3 Electives: SMM069 Advanced Predictive Analytics - Group Project
 
 Term 3 group project for Advanced Predictive Analytics (100% of module grade).
 
