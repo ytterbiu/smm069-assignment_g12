@@ -6,7 +6,9 @@ This coursework is split into two separate projects, but both are combined
 within the same document.
 
 - Group 12 working directory
-- HTML report: TBI
+
+> [!IMPORTANT]
+> HTML report: https://ytterbiu.github.io/smm069-assignment_g12/
 
 ## Formatting guide
 
