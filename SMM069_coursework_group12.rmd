@@ -295,12 +295,21 @@ Tangency portfolios using sample or shrinkage estimators for the mean and
 covariance matrix under a rolling out-of-sample (OOS) setting across the entire
 dataset.
 
+Load the executive summary up front - we can probably move these headings into the actual R code. 
+
+> need to ask: if they want us to clearly show in the pdf how we did the steps in 1a
+> Also: want to check* the below code calculates the Sharpe ratio on tiny 4-week
+windows and then averages those Sharpe ratios later.  Is that right?  Could we
+stitch the weekly returns into one long continuous series (e.g., all the weeks
+that fall into the "Pandemic" period) and calculate the Annualised Sharpe on
+that combined series?
+
 ## Data preprocessing
 
 We (i) convert the risk-free rate from percentage to decimal, and (ii) compute
 weekly excess returns for the 100 companies assigned to Group 12.
 
-```{r a1-load, include=TRUE, echo=FALSE}
+```{r a1-load, include=TRUE, echo=TRUE}
 # read in data (stored in data folder)
 ret_raw <- read.csv(
   "data/DA441_weekly_returns.csv",
@@ -314,7 +323,7 @@ ret_raw$Date <- as.Date(as.character(ret_raw$Date), format = "%Y%m%d")
 rf_raw$Date <- as.Date(as.character(rf_raw$Date), format = "%Y%m%d")
 
 # (i) convert risk-free rate from percentage -> decimal.
-rf_cpy <- rf_raw
+rf_cpy <- rf_raw # make quick copy
 rf_cpy$RF <- rf_raw$RF / 100
 
 # align rf to the return dates by date
@@ -325,8 +334,7 @@ ticker_cols <- setdiff(colnames(ret_raw), "Date")
 returns_all <- as.matrix(dat[, ticker_cols])
 rf <- dat$RF
 
-# (also in case another group finds this github...)
-# gets tickers
+# gets our specific tickers
 set.seed(12)
 selected <- sample(ticker_cols, 100)
 returns100 <- returns_all[, selected]
@@ -370,7 +378,7 @@ mean_estimators <- list(
   TL     = T_LSh_estimator,
   Wang   = Wang_estimator,
   BOP    = BOP_estimator,
-  Jorion = Jorion_estimator
+  Jorion = Jorion_estimator 
 )
 
 # Single covariance estimator for the whole analysis
@@ -662,7 +670,7 @@ if (knitr::is_html_output()) {
 \newpage
 ```
 
-## Rough working
+### Rough working
 
 ```{r, echo=FALSE, include=FALSE}
 u <- 2.3212
