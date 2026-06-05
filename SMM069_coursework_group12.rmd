@@ -127,6 +127,21 @@ library(kableExtra) # for general tables
 library(DT) # for HTML interactive data tables
 library(plotly) # for interactive html plots
 library(pander) # for writing to pandoc
+
+library(plotly) # interactive html plots
+
+# tmp ====
+library(readxl) # reading xlsx GICS sectors
+library(PerformanceAnalytics) 
+library(xts) 
+library(reshape2) 
+
+# Estimator functions ====
+source("All_eight_shrinkage_estimators.R")  # St_MSh_, D_MSh_, O_LSh_, T_LSh_, Wang_, BOP_, Jorion_estimator
+source("cov1Para.R")     
+
+# Setting random seed ====
+set.seed(12) # seed 12 for group 12 ( ˶ˆᗜˆ˵ )
 ```
 
 ```{r html-app, echo=FALSE, results='asis', eval=knitr::is_html_output(), purl=FALSE}
@@ -273,15 +288,351 @@ format_spaced_6dp <- function(x) {
 
 ---
 
-# Shrinkage Estimation for Portfolio Construction
+# Shrinkage estimation for portfolio construction
 
-note: want separate R states / instances to allow for no mixing/matching of
-variables
+Aims: Build and evaluate both Mean-Variance portfolios ($\gamma$ = 1) and
+Tangency portfolios using sample or shrinkage estimators for the mean and
+covariance matrix under a rolling out-of-sample (OOS) setting across the entire
+dataset.
 
-> Read in 
-> follow Practice session 1 code
+## Data preprocessing
 
-## Sub section 2 (want B1 or A1)
+We (i) convert the risk-free rate from percentage to decimal, and (ii) compute
+weekly excess returns for the 100 companies assigned to Group 12.
+
+```{r a1-load, include=TRUE, echo=FALSE}
+# read in data (stored in data folder)
+ret_raw <- read.csv(
+  "data/DA441_weekly_returns.csv",
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+rf_raw <- read.csv("data/risk_free_rate_weekly.csv", stringsAsFactors = FALSE)
+
+# format dates (format is 20090807 -> using %Y%m%d)
+ret_raw$Date <- as.Date(as.character(ret_raw$Date), format = "%Y%m%d")
+rf_raw$Date <- as.Date(as.character(rf_raw$Date), format = "%Y%m%d")
+
+# (i) convert risk-free rate from percentage -> decimal.
+rf_cpy <- rf_raw
+rf_cpy$RF <- rf_raw$RF / 100
+
+# align rf to the return dates by date
+dat <- merge(ret_raw, rf_cpy[, c("Date", "RF")], by = "Date")
+dates <- dat$Date
+# original tickers, kept for GICS
+ticker_cols <- setdiff(colnames(ret_raw), "Date") 
+returns_all <- as.matrix(dat[, ticker_cols])
+rf <- dat$RF
+
+# setting seed again
+set.seed(12)
+selected <- sample(ticker_cols, 100)
+returns100 <- returns_all[, selected]
+
+# (ii) Weekly excess returns: r_excess[t,i] = r[t,i] - rf[t].
+# sweep() subtracts the rf vector across rows explicitly (clearer than returns100 - rf).
+excess_returns <- sweep(returns100, 1, rf, FUN = "-")
+
+cat("Weeks:", nrow(excess_returns), " | Companies:", ncol(excess_returns), "\n")
+cat("Date range:", as.character(min(dates)), "to", as.character(max(dates)), "\n")
+```
+
+## Selection of estimation models
+
+Using all eight mean-vector estimators (Sample mean, St-MSh, D-MSh, O-LSh,
+T-LSh, Wang, BOP, Jorion) and a single covariance estimator: `cov1Para` (check
+full name of this from lecture slides).
+
+### Why `cov1Para`? (vs sample covariance)
+
+Each training window has $n = 156$ weeks for $p = 100$ assets, 
+$$\rightarrow\frac{n}{p} \approx 1.56$$
+
+<!-- The sample covariance -->
+<!-- is technically invertible ($n > p$) but poorly conditioned at this ratio: its -->
+<!-- smallest eigenvalues are badly underestimated, the inverse blows them up, and the -->
+<!-- resulting Mean-Variance / Tangency weights become extreme and unstable out of -->
+<!-- sample. `cov1Para` shrinks the sample covariance toward a scaled identity by an -->
+<!-- optimally estimated intensity, guaranteeing a well-conditioned, invertible matrix -->
+<!-- and far more stable portfolio weights - exactly the regime this estimator was -->
+<!-- designed for. We therefore use it for every portfolio below. -->
+
+```{r a2-estimators, include=FALSE, echo=FALSE}
+# Mean-vector estimators 
+# Check this* (each takes a returns matrix: rows = weeks, cols = assets).
+mean_estimators <- list(
+  Sample = function(X) colMeans(X),
+  StM    = St_MSh_estimator,
+  DM     = D_MSh_estimator,
+  OL     = O_LSh_estimator,
+  TL     = T_LSh_estimator,
+  Wang   = Wang_estimator,
+  BOP    = BOP_estimator,
+  Jorion = Jorion_estimator
+)
+
+# Single covariance estimator for the whole analysis
+cov_fun <- cov1Para
+```
+
+## Portfolio construction and rolling-window setup
+
+Training = 156 weeks, testing = 4 weeks, step = 4 weeks. 
+
+For each window and each
+mean estimator we build a Mean-Variance portfolio (omega = 1) and a Tangency
+portfolio; we also include the Equal-Weight benchmark (EWP).
+
+```{r a3-windows, include=TRUE, echo=FALSE}
+training_weeks <- 156
+testing_weeks <- 4
+step_weeks <- 4
+omega <- 1
+
+n_total <- nrow(excess_returns)
+n_windows <- floor((n_total - training_weeks - testing_weeks) / step_weeks) + 1
+cat("Total number of rolling windows:", n_windows, "\n")
+```
+
+```{r a3-helpers, include=FALSE, echo=FALSE}
+# annualised Sharpe ratio from a weekly excess-return series: 
+# (mean/sd) * sqrt(52).
+ann_sharpe <- function(r, scale = 52) {
+  r <- as.numeric(r)
+  s <- sd(r)
+  if (is.na(s) || s == 0) {
+    return(NA_real_)
+  }
+  (mean(r) / s) * sqrt(scale)
+}
+
+# Evaluate one window: returns a named vector of annualised Sharpe ratios for
+# MV_<mean>, TP_<mean> (8 each) and EWP -> 17 strategies.
+eval_window <- function(train_X, test_X, cov_fun, omega = 1) {
+  Sigma <- cov_fun(train_X)
+  Sigma_inv <- solve(Sigma)
+  out <- numeric(0)
+
+  for (nm in names(mean_estimators)) {
+    mu <- mean_estimators[[nm]](train_X)
+    z <- as.vector(Sigma_inv %*% mu) # unnormalised Sigma^{-1} mu
+
+    w_mv <- (1 / omega) * z # Mean-Variance (omega = 1): NOT normalised
+    w_tp <- z / sum(z) # Tangency: fully invested, weights sum to 1
+
+    # Portfolio excess-return series over the 4-week test window.
+    out[paste0("MV_", nm)] <- ann_sharpe(test_X %*% w_mv)
+    out[paste0("TP_", nm)] <- ann_sharpe(test_X %*% w_tp)
+  }
+
+  # Equal-Weight benchmark.
+  p <- ncol(train_X)
+  w_ew <- rep(1 / p, p)
+  out["EWP"] <- ann_sharpe(test_X %*% w_ew)
+
+  out
+}
+```
+
+```{r a3-rolling, include=FALSE, echo=FALSE}
+sr_list <- vector("list", n_windows)
+test_start_dates <- as.Date(rep(NA, n_windows))
+
+for (k in seq_len(n_windows)) {
+  tr_start <- 1 + (k - 1) * step_weeks
+  tr_end <- tr_start + training_weeks - 1
+  te_start <- tr_end + 1
+  te_end <- te_start + testing_weeks - 1
+
+  train_X <- excess_returns[tr_start:tr_end, , drop = FALSE]
+  test_X <- excess_returns[te_start:te_end, , drop = FALSE]
+
+  sr_list[[k]] <- eval_window(train_X, test_X, cov_fun = cov_fun, omega = omega)
+  test_start_dates[k] <- dates[te_start]
+}
+
+sr_mat <- do.call(rbind, sr_list)
+sr_df <- data.frame(TestStart = test_start_dates, sr_mat, check.names = FALSE)
+```
+
+## Portfolio performance
+
+Annualised Sharpe per window, summarised (mean and SD) over three environments.
+Windows are assigned to a sub-period by their test-window start date.
+
+<!-- Alternatives: require the whole test window inside the range, or use te_end. -->
+
+```{r a4-subperiods, include=FALSE, echo=FALSE}
+fc_lo <- as.Date("2008-10-06")
+fc_hi <- as.Date("2011-08-03") # Financial Crisis
+pd_lo <- as.Date("2020-02-26")
+pd_hi <- as.Date("2023-12-29") # Pandemic
+
+masks <- list(
+  Full = rep(TRUE, nrow(sr_df)),
+  FinancialCrisis = sr_df$TestStart >= fc_lo & sr_df$TestStart <= fc_hi,
+  Pandemic = sr_df$TestStart >= pd_lo & sr_df$TestStart <= pd_hi
+)
+
+strategy_cols <- setdiff(colnames(sr_df), "TestStart")
+
+summarise_period <- function(mask) {
+  sub <- sr_df[mask, strategy_cols, drop = FALSE]
+  data.frame(
+    Mean = sapply(sub, mean, na.rm = TRUE),
+    SD = sapply(sub, sd, na.rm = TRUE)
+  )
+}
+
+summary_full <- summarise_period(masks$Full)
+summary_fc <- summarise_period(masks$FinancialCrisis)
+summary_pd <- summarise_period(masks$Pandemic)
+
+cat(
+  "Windows -> Full:",
+  sum(masks$Full),
+  "| Financial Crisis:",
+  sum(masks$FinancialCrisis),
+  "| Pandemic:",
+  sum(masks$Pandemic),
+  "\n"
+)
+```
+
+```{r a4-tables, include=TRUE, echo=FALSE}
+kable(
+  summary_full[order(-summary_full$Mean), ],
+  digits = 4,
+  caption = "Annualised Sharpe Ratio - Full Period (mean, SD)",
+  booktabs = TRUE
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    position   = "center"
+  ) 
+
+kable(
+  summary_fc[order(-summary_fc$Mean), ],
+  digits = 4,
+  caption = "Annualised Sharpe Ratio - Financial Crisis (mean, SD)",
+  booktabs = TRUE
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    position   = "center"
+  ) 
+
+kable(
+  summary_pd[order(-summary_pd$Mean), ],
+  digits = 4,
+  caption = "Annualised Sharpe Ratio - Pandemic (mean, SD)",
+  booktabs = TRUE
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    position   = "center"
+  ) 
+
+```
+
+```{r a4-gics, include=TRUE, echo=FALSE}
+gics <- as.data.frame(read_excel("data/DA441_GICS_Sectors.xlsx"))
+
+# names(gics) # headers
+id_col <- "DA441_column_name"
+sector_col <- "GICS Sector Name"
+
+sel_gics <- gics[gics[[id_col]] %in% selected, ]
+nrow(sel_gics) # check: should be 100 (Y)
+
+sector_tab <- as.data.frame(table(sel_gics[[sector_col]]))
+colnames(sector_tab) <- c("Sector", "Count") 
+sector_tab <- sector_tab[order(-sector_tab$Count), ]
+```
+
+```{r a4-gics-table, include=TRUE, echo=FALSE}
+kable(
+  sector_tab,
+  row.names = FALSE,
+  booktabs = TRUE,
+  caption = "GICS sector composition of the 100 sampled companies (Group 12)"
+) %>%
+  kable_styling(full_width = FALSE, position = "center")
+```
+
+```{r a4-gics-figures, include=TRUE, echo=FALSE}
+# Doughnut chart
+okabe_ito <- c("#E69F00","#56B4E9","#009E73","#F0E442",
+               "#0072B2","#D55E00","#CC79A7","#FFFFF0",
+               "#999999", "#D4AEE3", "#B8E986")
+
+p_donut <- ggplot(sector_tab, aes(x = 2, y = Count, fill = Sector)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar(theta = "y") +
+  xlim(0.5, 2.5) +
+  geom_text(
+    aes(label = paste0(round(100 * Count / sum(Count), 1), "%")),
+    position = position_stack(vjust = 0.5),
+    size = 3
+  ) +
+  theme_void() +
+  scale_fill_manual(values = okabe_ito) +
+  labs(
+    title = "GICS sector composition (Group 12, 100 companies)",
+    fill = "GICS sector"
+  )
+
+if (knitr::is_html_output()) {
+  # plotly in html
+  plot_ly(
+    data = sector_tab, 
+    labels = ~Sector, 
+    values = ~Count, 
+    type = 'pie', 
+    hole = 0.6, 
+    marker = list(colors = okabe_ito),
+    textinfo = 'label+percent' 
+  ) %>%
+    layout(
+      title = "GICS sector composition (Group 12, 100 companies)",
+      showlegend = FALSE 
+    )
+} else {
+  p_donut
+}
+
+p_bar <- ggplot(sector_tab, aes(x = Count, y = reorder(Sector, Count), text = paste0(round(100 * Count / sum(Count), 1), "%"))) +
+  geom_col(fill = "#0072B2") +
+  labs(
+    title = "GICS sector composition (Group 12, 100 companies)",
+    x = "Companies",
+    y = NULL
+  ) +
+  scale_x_continuous(limits = c(0, 15), breaks = seq(0, 100, by = 5)) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+
+# Conditional Rendering for Bar
+if (knitr::is_html_output()) {
+  ggplotly(p_bar, tooltip = c("y", "x", "text"))
+} else {
+  p_bar
+}
+```
+
+## Interpretation of results and final report
+
+```{=latex}
+\clearpage
+\newpage
+```
+
+## Rough working
 
 ```{r, echo=FALSE, include=FALSE}
 u <- 2.3212
