@@ -46,3 +46,4 @@ peer-assessment/*
 figure-testing.R
 *.dcf
 utility_functions.R
+CHANGELOG.md
