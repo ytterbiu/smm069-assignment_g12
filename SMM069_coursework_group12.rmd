@@ -325,7 +325,8 @@ ticker_cols <- setdiff(colnames(ret_raw), "Date")
 returns_all <- as.matrix(dat[, ticker_cols])
 rf <- dat$RF
 
-# setting seed again
+# (also in case another group finds this github...)
+# gets tickers
 set.seed(12)
 selected <- sample(ticker_cols, 100)
 returns100 <- returns_all[, selected]
@@ -501,39 +502,68 @@ cat(
 ```
 
 ```{r a4-tables, include=TRUE, echo=FALSE}
-kable(
-  summary_full[order(-summary_full$Mean), ],
-  digits = 4,
-  caption = "Annualised Sharpe Ratio - Full Period (mean, SD)",
-  booktabs = TRUE
-) %>%
-  kable_styling(
-    full_width = FALSE,
-    position   = "center"
-  ) 
+# kept old working for posterity - in case you were curious :)
+# kable(
+#   summary_full[order(-summary_full$Mean), ],
+#   digits = 4,
+#   caption = "Annualised Sharpe Ratio - Full Period (mean, SD)",
+#   booktabs = TRUE
+# ) %>%
+#   kable_styling(
+#     full_width = FALSE,
+#     position   = "center"
+#   ) 
+# 
+# kable(
+#   summary_fc[order(-summary_fc$Mean), ],
+#   digits = 4,
+#   caption = "Annualised Sharpe Ratio - Financial Crisis (mean, SD)",
+#   booktabs = TRUE
+# ) %>%
+#   kable_styling(
+#     full_width = FALSE,
+#     position   = "center"
+#   ) 
+# 
+# kable(
+#   summary_pd[order(-summary_pd$Mean), ],
+#   digits = 4,
+#   caption = "Annualised Sharpe Ratio - Pandemic (mean, SD)",
+#   booktabs = TRUE
+# ) %>%
+#   kable_styling(
+#     full_width = FALSE,
+#     position   = "center"
+#   ) 
+
+summary_full$Strategy <- rownames(summary_full)
+summary_fc$Strategy <- rownames(summary_fc)
+summary_pd$Strategy <- rownames(summary_pd)
+
+combined_summary <- summary_full |>
+  left_join(summary_fc, by = "Strategy", suffix = c("_full", "_fc")) |>
+  left_join(summary_pd, by = "Strategy") |>
+  rename(Mean_pd = Mean, SD_pd = SD) |>
+  relocate("Strategy") |>
+  arrange(desc(Mean_full))
 
 kable(
-  summary_fc[order(-summary_fc$Mean), ],
+  combined_summary,
   digits = 4,
-  caption = "Annualised Sharpe Ratio - Financial Crisis (mean, SD)",
-  booktabs = TRUE
-) %>%
+  caption = "Annualised Sharpe ratio across periods",
+  booktabs = TRUE,
+  col.names = c("Strategy", "Mean", "SD", "Mean", "SD", "Mean", "SD")
+) |>
   kable_styling(
     full_width = FALSE,
-    position   = "center"
-  ) 
-
-kable(
-  summary_pd[order(-summary_pd$Mean), ],
-  digits = 4,
-  caption = "Annualised Sharpe Ratio - Pandemic (mean, SD)",
-  booktabs = TRUE
-) %>%
-  kable_styling(
-    full_width = FALSE,
-    position   = "center"
-  ) 
-
+    position = "center"
+  ) |>
+  add_header_above(c(
+    " " = 1,
+    "Full Period" = 2,
+    "Financial Crisis" = 2,
+    "Pandemic" = 2
+  ))
 ```
 
 ```{r a4-gics, include=TRUE, echo=FALSE}
