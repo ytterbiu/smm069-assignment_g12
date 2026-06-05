@@ -574,6 +574,13 @@ kable(
   ))
 ```
 
+Key points:
+
+- `EWP` gives the highest return for the amount of risk taken over the entire 23-year period. It was highly consistent and only got beaten once during the financial crisis
+- `O-LSh` performed well
+- Expand these points...
+- To do: need to plot graphs to mirror the style used in the lectures
+
 ```{r a4-gics, include=TRUE, echo=FALSE}
 gics <- as.data.frame(read_excel("data/DA441_GICS_Sectors.xlsx"))
 
@@ -684,7 +691,122 @@ $u=`r formatC(u, format="f", digits=5)`, \quad d=`r formatC(d, format="f", digit
 :::
 :::
 
-### Sub section 3
+### Testing
+
+```{r testing, echo=FALSE, include=TRUE}
+# Confirm: the per-window Sharpe columns are equal (TRUE = equal to numerical tolerance)
+all.equal(sr_df$MV_Sample, sr_df$MV_StM)
+all.equal(sr_df$TP_Sample, sr_df$TP_StM)
+
+# Why: St-MSh is the sample mean times a single scalar, so the ratio is constant
+tr    <- excess_returns[1:training_weeks, , drop = FALSE]
+mu_s  <- mean_estimators$Sample(tr)
+mu_st <- mean_estimators$StM(tr)
+c(min = min(mu_st / mu_s), max = max(mu_st / mu_s))   # min == max => one scalar multiple
+```
+
+```{r a-additional-metrics, echo=FALSE, include=TRUE}
+# ---- cov1Para vs sample covariance: conditioning, leverage, turnover, OOS perf ----
+# Mean estimators and portfolio construction are held fixed; only Sigma changes.
+
+run_diag <- function(cov_fun) {
+  conds  <- numeric(n_windows)
+  W_list <- vector("list", n_windows)   # tangency weights per window (p x 8)
+  R_list <- vector("list", n_windows)   # OOS weekly returns per window (4 x 8)
+
+  for (k in seq_len(n_windows)) {
+    tr_start <- 1 + (k - 1) * step_weeks
+    tr_end   <- tr_start + training_weeks - 1
+    te_start <- tr_end + 1
+    te_end   <- te_start + testing_weeks - 1
+    train_X  <- excess_returns[tr_start:tr_end, , drop = FALSE]
+    test_X   <- excess_returns[te_start:te_end, , drop = FALSE]
+
+    Sigma     <- cov_fun(train_X)
+    ev        <- eigen(Sigma, symmetric = TRUE, only.values = TRUE)$values
+    conds[k]  <- max(ev) / min(ev)                 # condition number of the estimate
+    Sigma_inv <- solve(Sigma)
+
+    W <- sapply(names(mean_estimators), function(nm) {
+      z <- as.vector(Sigma_inv %*% mean_estimators[[nm]](train_X))
+      z / sum(z)                                   # tangency weights
+    })
+    colnames(W) <- paste0("TP_", names(mean_estimators))
+    W_list[[k]] <- W
+    R_list[[k]] <- test_X %*% W
+  }
+
+  gross <- rowMeans(sapply(W_list, function(W) colSums(abs(W))))     # gross leverage
+  maxw  <- rowMeans(sapply(W_list, function(W) apply(abs(W), 2, max))) # max abs weight
+  turn  <- rowMeans(sapply(2:n_windows, function(k)                  # month-to-month turnover
+             colSums(abs(W_list[[k]] - W_list[[k - 1]]))))
+
+  R_all      <- do.call(rbind, R_list)                              # stitched OOS weeks x 8
+  oos_sharpe <- apply(R_all, 2, ann_sharpe)
+  oos_vol    <- apply(R_all, 2, sd, na.rm = TRUE) * sqrt(52)
+
+  tab <- data.frame(GrossLeverage = gross, MaxWeight = maxw, Turnover = turn,
+                    OOS_Vol = oos_vol, OOS_Sharpe = oos_sharpe,
+                    row.names = names(gross))
+  list(mean_cond = mean(conds), table = round(tab, 3))
+}
+
+d_shrink <- run_diag(cov1Para)
+d_sample <- run_diag(function(X) cov(X))
+
+cat("Mean condition number   cov1Para:", round(d_shrink$mean_cond, 1),
+    "  sample:", round(d_sample$mean_cond, 1), "\n\n")
+
+compare <- merge(d_shrink$table, d_sample$table,
+                 by = "row.names", suffixes = c("_cov1Para", "_sample"))
+compare
+
+# Test no.2 with unweighted ====
+run_diag <- function(cov_fun, normalise = FALSE) {
+  conds  <- numeric(n_windows)
+  W_list <- vector("list", n_windows)
+
+  for (k in seq_len(n_windows)) {
+    tr_start <- 1 + (k - 1) * step_weeks
+    tr_end   <- tr_start + training_weeks - 1
+    train_X  <- excess_returns[tr_start:tr_end, , drop = FALSE]
+
+    Sigma     <- cov_fun(train_X)
+    ev        <- eigen(Sigma, symmetric = TRUE, only.values = TRUE)$values
+    conds[k]  <- max(ev) / min(ev)
+    Sigma_inv <- solve(Sigma)
+
+    W <- sapply(names(mean_estimators), function(nm) {
+      z <- as.vector(Sigma_inv %*% mean_estimators[[nm]](train_X))
+      if (normalise) z / sum(z) else z          # raw MV weights by default
+    })
+    colnames(W) <- names(mean_estimators)
+    W_list[[k]] <- W
+  }
+
+  gross <- sapply(W_list, function(W) colSums(abs(W)))               # 8 x n_windows
+  maxw  <- sapply(W_list, function(W) apply(abs(W), 2, max))
+  turn  <- sapply(2:n_windows, function(k) colSums(abs(W_list[[k]] - W_list[[k - 1]])))
+
+  tab <- data.frame(
+    GrossLev_median = apply(gross, 1, median),
+    GrossLev_p95    = apply(gross, 1, quantile, 0.95),   # exposes the unstable windows
+    MaxWeight_med   = apply(maxw,  1, median),
+    Turnover_median = apply(turn,  1, median),
+    row.names = names(mean_estimators)
+  )
+  list(median_cond = median(conds), table = round(tab, 3))
+}
+
+d_shrink <- run_diag(cov1Para)                 # raw MV weights, median summaries
+d_sample <- run_diag(function(X) cov(X))
+
+cat("Condition number (median)  cov1Para:", round(d_shrink$median_cond, 1),
+    " sample:", round(d_sample$median_cond, 1), "\n\n")
+
+merge(d_shrink$table, d_sample$table, by = "row.names",
+      suffixes = c("_cov1Para", "_sample"))
+```
 
 ```{=latex}
 \clearpage
