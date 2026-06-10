@@ -144,21 +144,6 @@ source("cov1Para.R")
 set.seed(12) # seed 12 for group 12 ( ˶ˆᗜˆ˵ )
 ```
 
-```{r html-app, echo=FALSE, results='asis', eval=knitr::is_html_output(), purl=FALSE}
-#------------------------------ HTML link to app ------------------------------#
-library(htmltools)
-
-# div(style = "background-color: #f8f9fa; padding: 20px; border: 1px solid #e9ecef; border-radius: 5px; text-align: center; margin-bottom: 30px;",
-#   h3("Bonus Interactive Dashboard Available"),
-#   p("This static report is accompanied by a live R Shiny dashboard allowing one to use a selection of 16 US stocks in different 5 portfolio combinations."),
-#   a(href = "https://3enji.shinyapps.io/smm068-a01-g08-dashboard/",
-#     target = "_blank",
-#     class = "btn btn-primary",
-#     style = "background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;",
-#     "Launch Interactive Dashboard")
-# )
-```
-
 ```{r custom-functions, include=FALSE, echo=FALSE}
 #---------------------------- Custom QOL functions ----------------------------#
 #####################################
@@ -372,10 +357,10 @@ $$\rightarrow\frac{n}{p} \approx 1.56$$
 # Check this* (each takes a returns matrix: rows = weeks, cols = assets).
 mean_estimators <- list(
   Sample = function(X) colMeans(X),
-  StM    = St_MSh_estimator,
-  DM     = D_MSh_estimator,
-  OL     = O_LSh_estimator,
-  TL     = T_LSh_estimator,
+  StMSh = St_MSh_estimator,
+  DMSh  = D_MSh_estimator,
+  OLSh  = O_LSh_estimator,
+  TLSh  = T_LSh_estimator,
   Wang   = Wang_estimator,
   BOP    = BOP_estimator,
   Jorion = Jorion_estimator 
@@ -407,6 +392,12 @@ cat("Total number of rolling windows:", n_windows, "\n")
 ```{r a3-helpers, include=FALSE, echo=FALSE}
 # annualised Sharpe ratio from a weekly excess-return series: 
 # (mean/sd) * sqrt(52).
+# Function used for:
+# > Safety and Error Handling
+#   - if assets in 4-week window have zero volatility would get `Inf` or `NaN`
+#   - fn catches this <- returns NA
+# > Reusability
+# > Readability
 ann_sharpe <- function(r, scale = 52) {
   r <- as.numeric(r)
   s <- sd(r)
@@ -558,7 +549,7 @@ combined_summary <- summary_full |>
 kable(
   combined_summary,
   digits = 4,
-  caption = "Annualised Sharpe ratio across periods",
+  caption = "Annualised Sharpe ratio across periods. A higher Sharpe ratio means the strategy is generating more return per unit of risk. A lower or negative Sharpe ratio indicates that the risk being taken is not being adequately rewarded with returns.",
   booktabs = TRUE,
   col.names = c("Strategy", "Mean", "SD", "Mean", "SD", "Mean", "SD")
 ) |>
@@ -571,13 +562,60 @@ kable(
     "Full Period" = 2,
     "Financial Crisis" = 2,
     "Pandemic" = 2
-  ))
+  )) |>
+  # Highlight the highest value in Full Period (Column 2)
+  column_spec(
+    2,
+    bold = combined_summary$Mean_full ==
+      max(combined_summary$Mean_full, na.rm = TRUE),
+    color = ifelse(
+      combined_summary$Mean_full ==
+        max(combined_summary$Mean_full, na.rm = TRUE),
+      "#1b9e77",
+      "black"
+    )
+  ) |>
+  # Highlight the highest value in Financial Crisis (Column 4)
+  column_spec(
+    4,
+    bold = combined_summary$Mean_fc ==
+      max(combined_summary$Mean_fc, na.rm = TRUE),
+    color = ifelse(
+      combined_summary$Mean_fc == max(combined_summary$Mean_fc, na.rm = TRUE),
+      "#1b9e77",
+      "black"
+    )
+  ) |>
+  # Highlight the highest value in Pandemic (Column 6)
+  column_spec(
+    6,
+    bold = combined_summary$Mean_pd ==
+      max(combined_summary$Mean_pd, na.rm = TRUE),
+    color = ifelse(
+      combined_summary$Mean_pd == max(combined_summary$Mean_pd, na.rm = TRUE),
+      "#1b9e77",
+      "black"
+    )
+  )
 ```
 
 Key points:
 
+- simplicity seems to be best 
 - `EWP` gives the highest return for the amount of risk taken over the entire 23-year period. It was highly consistent and only got beaten once during the financial crisis
-- `O-LSh` performed well
+- Check to see if this is well-documented literature 
+finance: complex optimization models often fail out-of-sample due to estimation error, while the "naive" $1/N$ portfolio remains highly robust.
+- shrinkage helps in turbulant periods
+  - Tangency portfolio using the OLSh estimator (TP_OLSh) was best (2.3099* - code val using R)
+  - Specific shrinkage techniques better at handling the extreme volatility and structural breaks of 2008
+- estimation risk 
+  - 'traditional' MV_Sample and TP_Sample portfolios perform relatively poorly
+  - many advanced estimators result in negative Sharpe ratios during the Pandemic (e.g., TP_Jorion at -2.2950), 
+  - due to how sensitive optimisation is to noisy input data?
+
+
+- `O-LSh` performed well?
+
 - Expand these points...
 - To do: need to plot graphs to mirror the style used in the lectures
 
