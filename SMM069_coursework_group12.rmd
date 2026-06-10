@@ -544,13 +544,21 @@ combined_summary <- summary_full |>
   left_join(summary_pd, by = "Strategy") |>
   rename(Mean_pd = Mean, SD_pd = SD) |>
   relocate("Strategy") |>
-  arrange(desc(Mean_full))
+  # sort into custom order (benchmark EWP at top, -> by Estimator -> by MV/TP)
+  mutate(
+    is_ewp = Strategy == "EWP", 
+    Estimator = sub(".*_", "", Strategy), # get suffix
+    Prefix = sub("_.*", "", Strategy) # get prefix    
+  ) |>
+  arrange(desc(is_ewp), Estimator, Prefix) |>
+  select(-is_ewp, -Estimator, -Prefix) # Remove temp cols
 
 kable(
   combined_summary,
   digits = 4,
-  caption = "Annualised Sharpe ratio across periods. A higher Sharpe ratio means the strategy is generating more return per unit of risk. A lower or negative Sharpe ratio indicates that the risk being taken is not being adequately rewarded with returns.",
+  caption = "Annualised Sharpe ratio across periods (higher Sharpe ratio is better - means strategy is generating more return per unit of risk). BE note: show column for MV vs TP then remove from strategy ID?* ask group",
   booktabs = TRUE,
+  linesep = c("\\addlinespace", "", "", ""),
   col.names = c("Strategy", "Mean", "SD", "Mean", "SD", "Mean", "SD")
 ) |>
   kable_styling(
@@ -563,7 +571,6 @@ kable(
     "Financial Crisis" = 2,
     "Pandemic" = 2
   )) |>
-  # Highlight the highest value in Full Period (Column 2)
   column_spec(
     2,
     bold = combined_summary$Mean_full ==
@@ -599,19 +606,18 @@ kable(
   )
 ```
 
-Key points:
+Notes:
 
-- simplicity seems to be best 
-- `EWP` gives the highest return for the amount of risk taken over the entire 23-year period. It was highly consistent and only got beaten once during the financial crisis
-- Check to see if this is well-documented literature 
+- Simple wins?  "EPW has no esimation error"
+  - `EWP` gives the highest return for the amount of risk taken over the entire 23-year period. It was highly consistent and only got beaten once during the financial crisis. !Check this with literature*
 finance: complex optimization models often fail out-of-sample due to estimation error, while the "naive" $1/N$ portfolio remains highly robust.
 - shrinkage helps in turbulant periods
   - Tangency portfolio using the OLSh estimator (TP_OLSh) was best (2.3099* - code val using R)
   - Specific shrinkage techniques better at handling the extreme volatility and structural breaks of 2008
 - estimation risk 
-  - 'traditional' MV_Sample and TP_Sample portfolios perform relatively poorly
+  - average weekly return from 'traditional' MV_Sample and TP_Sample portfolios perform relatively poorly.  Overweight assets that simply got lucky in the training window -> error maximisation
   - many advanced estimators result in negative Sharpe ratios during the Pandemic (e.g., TP_Jorion at -2.2950), 
-  - due to how sensitive optimisation is to noisy input data?
+  - due to how sensitive optimisation is to noisy input data? - Check during session
 
 
 - `O-LSh` performed well?
