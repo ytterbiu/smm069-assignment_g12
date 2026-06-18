@@ -1,5 +1,7 @@
 ---
-title: "Shrinkage Estimation in Finance and Insurance: Portfolio Construction and Claim Severity Modelling"
+title:
+  "Shrinkage Estimation in Finance and Insurance: Portfolio Construction and
+  Claim Severity Modelling"
 subtitle: "SMM069 (2025-26) Group Coursework - Group 12"
 author:
   - "Gaurav Agrawal"
@@ -19,12 +21,15 @@ output:
     theme: paper
     highlight: tango
     df_print: paged
-  # runtime: shiny
+    # runtime: shiny
+    pandoc_args:
+      - "--lua-filter=style_code.lua"
   bookdown::pdf_document2:
     includes:
       in_header: preamble.tex
     pandoc_args:
       - "--lua-filter=answer.lua"
+      - "--lua-filter=style_code.lua"
     number_sections: true
     toc: true
     latex_engine: xelatex
@@ -56,22 +61,27 @@ This R Markdown document was created as part of a group assignment for SMM069 at
 #   - "Benjamin Evans"
 #   - "Samyak Jain"
 #   - "Basmah Khan"
-# Professor:    Prof Vali Asimit
+# Professor:    Prof Vali Asimit & Ms Ziwei Chen
 # Institution:  Bayes Business School - City St George's, University of London
 # Date:         09 Jul 2026
 #
 # Description:  Term 3 group project for SMM069 Advanced Predictive Analtyics
-#               (100% of coursework grade - 100% of module grade). The R code
-#               below has been exported directly from an R Markdown (.rmd) file.
-#               Hence the knitr settings.
+#               (100% of coursework grade - 100% of module grade).
 #
-# Dependencies (!TBI):
+# Dependencies:
+#   - TBI
+#
 #   - tidyverse: loads dplyr, tidyr, ggplot2, purrr (& others)
 #   - scales: to express portfolio weights as percentage
 #   - patchwork: for combining multiple plots into one figure
 #
 # Acknowledgements
 #   - TBI
+#
+# Note to Vali and Ziwei:
+#   We originally planned to submit just an R file exported from this RMD,
+#   hence this 'asthetic header'. We left it in as a legacy artefact after
+#   deciding to submit our code as this single RMD file.
 # ============================================================================ #
 ```
 
@@ -82,7 +92,7 @@ dir.create("fig", showWarnings = FALSE)
 
 # Defaults common to all outputs
 knitr::opts_chunk$set(
-  echo     = TRUE,
+  echo     = FALSE,
   message  = FALSE,
   warning  = FALSE,
   fig.align = "center",
@@ -124,59 +134,44 @@ library(patchwork) # for combining multiple plots into one figure
 
 # --- Reporting & Tables ---
 library(kableExtra) # for general tables
-library(DT) # for HTML interactive data tables
-library(plotly) # for interactive html plots
-library(pander) # for writing to pandoc
+library(DT)         # for HTML interactive data tables
+library(plotly)     # for interactive html plots
+library(pander)     # for writing to pandoc
 
-library(plotly) # interactive html plots
+# --- Statistical Modelling & Mathematics ---
+library(MASS)      # Support functions and datasets for applied statistics
+library(glm2)      # Fitting generalised linear models
+library(glmnet)    # Lasso and elastic-net
+library(splines)   # Regression spline functions
+
+# --- Course-Specific / Custom Packages ---
+library(savvySh)   # Custom coursework package
+library(savvyPR)   # Custom coursework package
+library(savvyGLM)  # Custom coursework package
 
 # tmp ====
 library(readxl) # reading xlsx GICS sectors
-library(PerformanceAnalytics) 
-library(xts) 
-library(reshape2) 
+library(PerformanceAnalytics)
+library(xts)
+library(reshape2)
 
 # Estimator functions ====
-source("All_eight_shrinkage_estimators.R")  # St_MSh_, D_MSh_, O_LSh_, T_LSh_, Wang_, BOP_, Jorion_estimator
-source("cov1Para.R")     
+# St_MSh_, D_MSh_, O_LSh_, T_LSh_, Wang_, BOP_, Jorion_estimator
+source("All_eight_shrinkage_estimators.R")
+source("cov1Para.R")
 
-# Setting random seed ====
-set.seed(12) # seed 12 for group 12 ( ˶ˆᗜˆ˵ )
+# Global env options ====
+## Setting random seed ----
+group_num <- 12 # seed 12 for group 12 ( ˶ˆᗜˆ˵ )
+set.seed(group_num)
+## disable scientific notation ----
+options(scipen = 999) 
 ```
 
 ```{r custom-functions, include=FALSE, echo=FALSE}
 #---------------------------- Custom QOL functions ----------------------------#
-#####################################
-# function: banner comments (used to to section up code)
-# Usage: banner_comment("Element 1: data cleaning") -> then ctrl + v (or cmd+v)
-#####################################
-banner_comment <- function(text, width = 80, border = "#", fill = "-") {
-  txt <- paste0(" ", text, " ")
-  inner_width <- width - 2 * nchar(border)
-  banner_string <- ""
-
-  if (inner_width <= nchar(txt)) {
-    banner_string <- paste0(border, txt, border)
-  } else {
-    pad_total <- inner_width - nchar(txt)
-    pad_left <- pad_total %/% 2
-    pad_right <- pad_total - pad_left
-
-    banner_string <- paste0(
-      border,
-      strrep(fill, pad_left),
-      txt,
-      strrep(fill, pad_right),
-      border
-    )
-  }
-
-  cat(banner_string, "\n")
-  # copy banner to allow direct pasting (requires clipr)
-  clipr::write_clip(banner_string)
-  # avoid [1] when printing if want to manually copy
-  invisible(banner_string)
-}
+# BE Note: most of these are legacy functions from previous projects - just
+# keep them here to have all in one contained file.
 #####################################
 # function: format p-values for text
 # Usage (in-line): `r format_p_vals(ad_test_result$p.value)`
@@ -267,137 +262,94 @@ format_spaced_6dp <- function(x) {
   # Insert space between the first 3 and last 3 decimal digits
   sub("(\\.[0-9]{3})([0-9]{3})$", "\\1 \\2", s)
 }
+#####################################
+# function: compact inline number formatter
+# Usage (in-line): `r fmt(2.32320)`
+fmt <- function(x, d = 2) {
+  formatC(x, format = "f", digits = d, big.mark = ",")
+}
 ```
 
 # Coursework 1 {-}
 
----
-
 # Shrinkage estimation for portfolio construction
 
-Aims: Build and evaluate both Mean-Variance portfolios ($\gamma$ = 1) and
-Tangency portfolios using sample or shrinkage estimators for the mean and
-covariance matrix under a rolling out-of-sample (OOS) setting across the entire
-dataset.
-
-Load the executive summary up front - we can probably move these headings into the actual R code. 
-
-> need to ask: if they want us to clearly show in the pdf how we did the steps in 1a
-> Also: want to check* the below code calculates the Sharpe ratio on tiny 4-week
-windows and then averages those Sharpe ratios later.  Is that right?  Could we
-stitch the weekly returns into one long continuous series (e.g., all the weeks
-that fall into the "Pandemic" period) and calculate the Annualised Sharpe on
-that combined series?
-
-## Data preprocessing
-
-We (i) convert the risk-free rate from percentage to decimal, and (ii) compute
-weekly excess returns for the 100 companies assigned to Group 12.
-
-```{r a1-load, include=TRUE, echo=TRUE}
+```{r a-data-load, include=FALSE}
+no_companies <- 100
 # read in data (stored in data folder)
-ret_raw <- read.csv(
+ret_raw <- read.csv(                    
   "data/DA441_weekly_returns.csv",
-  stringsAsFactors = FALSE,
+  stringsAsFactors = FALSE, 
   check.names = FALSE
 )
 rf_raw <- read.csv("data/risk_free_rate_weekly.csv", stringsAsFactors = FALSE)
-
-# format dates (format is 20090807 -> using %Y%m%d)
-ret_raw$Date <- as.Date(as.character(ret_raw$Date), format = "%Y%m%d")
-rf_raw$Date <- as.Date(as.character(rf_raw$Date), format = "%Y%m%d")
-
-# (i) convert risk-free rate from percentage -> decimal.
-rf_cpy <- rf_raw # make quick copy
-rf_cpy$RF <- rf_raw$RF / 100
-
-# align rf to the return dates by date
-dat <- merge(ret_raw, rf_cpy[, c("Date", "RF")], by = "Date")
-dates <- dat$Date
-# original tickers, kept for GICS
-ticker_cols <- setdiff(colnames(ret_raw), "Date") 
-returns_all <- as.matrix(dat[, ticker_cols])
-rf <- dat$RF
-
-# gets our specific tickers
-set.seed(12)
-selected <- sample(ticker_cols, 100)
-returns100 <- returns_all[, selected]
-
-# (ii) Weekly excess returns: r_excess[t,i] = r[t,i] - rf[t].
-# sweep() subtracts the rf vector across rows explicitly (clearer than returns100 - rf).
-excess_returns <- sweep(returns100, 1, rf, FUN = "-")
-
-cat("Weeks:", nrow(excess_returns), " | Companies:", ncol(excess_returns), "\n")
-cat("Date range:", as.character(min(dates)), "to", as.character(max(dates)), "\n")
+gics <- as.data.frame(read_excel("data/DA441_GICS_Sectors.xlsx"))
+# format dates
+ret_raw$Date <- as.Date(as.character(ret_raw$Date), format = "%Y%m%d") 
+rf_raw$Date  <- as.Date(as.character(rf_raw$Date),  format = "%Y%m%d")
 ```
 
-## Selection of estimation models
+```{r a-data-prep, include=FALSE}
+## (i) convert risk-free rate from percentage -> decimal  ----
+rf_dec    <- rf_raw # make quick copy
+rf_dec$RF <- rf_raw$RF / 100
+# align risk free rate to the return dates by date
+dat <- merge(ret_raw, rf_dec[, c("Date", "RF")], by = "Date")
+dates <- dat$Date
+# original tickers, kept for GICS
+ticker_cols <- setdiff(colnames(ret_raw), "Date")
+returns_all <- as.matrix(dat[, ticker_cols])
+rf <- dat$RF
+# gets our specific tickers
+set.seed(group_num)
+selected <- sample(ticker_cols, no_companies)
+returns100 <- returns_all[, selected]
 
-Using all eight mean-vector estimators (Sample mean, St-MSh, D-MSh, O-LSh,
-T-LSh, Wang, BOP, Jorion) and a single covariance estimator: `cov1Para` (check
-full name of this from lecture slides).
+## (ii) Weekly excess returns: r_excess[t,i] = r[t,i] - rf[t] ----
+# sweep() subtracts the rf vector across rows (clearer than returns100 - rf)
+excess_returns <- sweep(returns100, 1, rf, FUN = "-")
+```
 
-### Why `cov1Para`? (vs sample covariance)
+```{r a-params-estimators, include=FALSE}
+# rolling-window parameters
+training_weeks  <- 156
+testing_weeks   <- 4
+step_weeks      <- 4
+omega           <- 1      # risk aversion gamma = 1
 
-Each training window has $n = 156$ weeks for $p = 100$ assets, 
-$$\rightarrow\frac{n}{p} \approx 1.56$$
+# BE note: n_assets should always equal no_companies as data comes pre-cleaned
+n_total   <- nrow(excess_returns)
+n_windows <- floor((n_total - training_weeks - testing_weeks) / step_weeks) + 1
+n_weeks   <- n_total
+n_assets  <- ncol(excess_returns)
+np_ratio  <- training_weeks / n_assets
+cat("Total number of rolling windows:", n_windows, "\n")
 
-<!-- The sample covariance -->
-<!-- is technically invertible ($n > p$) but poorly conditioned at this ratio: its -->
-<!-- smallest eigenvalues are badly underestimated, the inverse blows them up, and the -->
-<!-- resulting Mean-Variance / Tangency weights become extreme and unstable out of -->
-<!-- sample. `cov1Para` shrinks the sample covariance toward a scaled identity by an -->
-<!-- optimally estimated intensity, guaranteeing a well-conditioned, invertible matrix -->
-<!-- and far more stable portfolio weights - exactly the regime this estimator was -->
-<!-- designed for. We therefore use it for every portfolio below. -->
-
-```{r a2-estimators, include=FALSE, echo=FALSE}
-# Mean-vector estimators 
+# Mean-vector estimators
 # Check this* (each takes a returns matrix: rows = weeks, cols = assets).
 mean_estimators <- list(
   Sample = function(X) colMeans(X),
   StMSh = St_MSh_estimator,
-  DMSh  = D_MSh_estimator,
-  OLSh  = O_LSh_estimator,
-  TLSh  = T_LSh_estimator,
-  Wang   = Wang_estimator,
-  BOP    = BOP_estimator,
-  Jorion = Jorion_estimator 
+  DMSh = D_MSh_estimator,
+  OLSh = O_LSh_estimator,
+  TLSh = T_LSh_estimator,
+  Wang = Wang_estimator,
+  BOP = BOP_estimator,
+  Jorion = Jorion_estimator
 )
-
+# Mirroring paper ordering from Asimit et al. 2026, Table 3
+# proposed estimators -> sample -> benchmarks
+est_order <- c(
+  "StMSh", "DMSh", "OLSh", "TLSh", "Sample", "Wang", "BOP", "Jorion"
+)
+stopifnot(setequal(est_order, names(mean_estimators)))
 # Single covariance estimator for the whole analysis
 cov_fun <- cov1Para
-```
 
-## Portfolio construction and rolling-window setup
-
-Training = 156 weeks, testing = 4 weeks, step = 4 weeks. 
-
-For each window and each
-mean estimator we build a Mean-Variance portfolio (omega = 1) and a Tangency
-portfolio; we also include the Equal-Weight benchmark (EWP).
-
-```{r a3-windows, include=TRUE, echo=FALSE}
-training_weeks <- 156
-testing_weeks <- 4
-step_weeks <- 4
-omega <- 1
-
-n_total <- nrow(excess_returns)
-n_windows <- floor((n_total - training_weeks - testing_weeks) / step_weeks) + 1
-cat("Total number of rolling windows:", n_windows, "\n")
-```
-
-```{r a3-helpers, include=FALSE, echo=FALSE}
-# annualised Sharpe ratio from a weekly excess-return series: 
-# (mean/sd) * sqrt(52).
-# Function used for:
-# > Safety and Error Handling
-#   - if assets in 4-week window have zero volatility would get `Inf` or `NaN`
-#   - fn catches this <- returns NA
-# > Reusability
-# > Readability
+# annualised Sharpe ratio from a weekly excess-return series
+# > (mean/sd) * sqrt(52).
+# > catches if assets in 4-week window have zero volatility
+# > would get `Inf` or `NaN` -> this changes these values to NA()
 ann_sharpe <- function(r, scale = 52) {
   r <- as.numeric(r)
   s <- sd(r)
@@ -406,88 +358,147 @@ ann_sharpe <- function(r, scale = 52) {
   }
   (mean(r) / s) * sqrt(scale)
 }
+```
 
-# Evaluate one window: returns a named vector of annualised Sharpe ratios for
-# MV_<mean>, TP_<mean> (8 each) and EWP -> 17 strategies.
-eval_window <- function(train_X, test_X, cov_fun, omega = 1) {
-  Sigma <- cov_fun(train_X)
-  Sigma_inv <- solve(Sigma)
+```{r a-cov-diagnostic, include=TRUE}
+# conditioning diagnostic
+# cov1Para vs sample covariance
+# mean estimator and porfolio construction held constant & just sigma changes
+
+run_diag <- function(X, cov_estimator, mean_estimators,
+                     training_weeks, testing_weeks, step_weeks) {
+  n_windows <- floor((nrow(X) - training_weeks - testing_weeks) / step_weeks) + 1
+  conds <- numeric(n_windows)
+  Wl <- vector("list", n_windows)
+  Rl <- vector("list", n_windows)
+  for (k in seq_len(n_windows)) {
+    tr_start <- 1 + (k - 1) * step_weeks
+    tr_end <- tr_start + training_weeks - 1
+    te_start <- tr_end + 1
+    te_end <- te_start + testing_weeks - 1
+    train_X <- X[tr_start:tr_end, , drop = FALSE]
+    test_X <- X[te_start:te_end, , drop = FALSE]
+
+    Sigma <- cov_estimator(train_X)
+    ev <- eigen(Sigma, symmetric = TRUE, only.values = TRUE)$values
+    conds[k] <- max(ev) / min(ev)
+    Sigma_inv <- solve(Sigma)
+
+    W <- sapply(mean_estimators, function(f) {
+      z <- as.vector(Sigma_inv %*% f(train_X))
+      z / sum(z) # tangency weights
+    })
+    colnames(W) <- names(mean_estimators)
+    Wl[[k]] <- W
+    Rl[[k]] <- test_X %*% W
+  }
+  gross <- rowMeans(sapply(Wl, function(W) colSums(abs(W))))
+  turn <- rowMeans(sapply(2:n_windows, function(k) colSums(abs(Wl[[k]] - Wl[[k - 1]]))))
+  oos <- apply(do.call(rbind, Rl), 2, ann_sharpe)
+  list(
+    cond_mean = mean(conds), cond_med = median(conds),
+    tab = data.frame(
+      GrossLev = gross, Turnover = turn, OOS_Sharpe = oos,
+      row.names = names(mean_estimators)
+    )
+  )
+}
+diag_shrink <- run_diag(
+  excess_returns, cov1Para, mean_estimators,
+  training_weeks, testing_weeks, step_weeks
+)
+diag_sample <- run_diag(
+  excess_returns, function(X) cov(X), mean_estimators,
+  training_weeks, testing_weeks, step_weeks
+)
+
+cond_mean_shrink <- diag_shrink$cond_mean
+cond_mean_sample <- diag_sample$cond_mean
+cond_med_shrink <- diag_shrink$cond_med
+cond_med_sample <- diag_sample$cond_med
+cond_ratio_mean <- cond_mean_sample / cond_mean_shrink
+
+cmp <- merge(diag_shrink$tab, diag_sample$tab,
+  by = "row.names",
+  suffixes = c("_cov1Para", "_sample")
+)
+rownames(cmp) <- cmp$Row.names
+cmp$Row.names <- NULL
+# cond_tab <- cmp[names(mean_estimators), ]
+cond_tab <- cmp[est_order, ]
+```
+
+```{r a-rolling, include=FALSE}
+# build mean variance and tangency portfolio weights per estimator (& EWP)
+# > Score each by annualised Sharpe ratio over 4 week test window
+# > Then roll forward across sample (described in labs)
+eval_window <- function(train_X, test_X, cov_fun, mean_estimators, omega = 1) {
+  Sigma_inv <- solve(cov_fun(train_X))
   out <- numeric(0)
-
   for (nm in names(mean_estimators)) {
     mu <- mean_estimators[[nm]](train_X)
-    z <- as.vector(Sigma_inv %*% mu) # unnormalised Sigma^{-1} mu
-
-    w_mv <- (1 / omega) * z # Mean-Variance (omega = 1): NOT normalised
-    w_tp <- z / sum(z) # Tangency: fully invested, weights sum to 1
-
-    # Portfolio excess-return series over the 4-week test window.
+    # Sigma^{-1} mu
+    z <- as.vector(Sigma_inv %*% mu)
+    # mean-variance (gamma = 1) <-> un-normalised
+    w_mv <- (1 / omega) * z
+    # tangency -> weights sum to 1
+    w_tp <- z / sum(z)
     out[paste0("MV_", nm)] <- ann_sharpe(test_X %*% w_mv)
     out[paste0("TP_", nm)] <- ann_sharpe(test_X %*% w_tp)
   }
-
-  # Equal-Weight benchmark.
-  p <- ncol(train_X)
-  w_ew <- rep(1 / p, p)
+  w_ew <- rep(1 / ncol(train_X), ncol(train_X))
+  # equal-weight benchmark
   out["EWP"] <- ann_sharpe(test_X %*% w_ew)
-
   out
 }
-```
 
-```{r a3-rolling, include=FALSE, echo=FALSE}
 sr_list <- vector("list", n_windows)
 test_start_dates <- as.Date(rep(NA, n_windows))
-
 for (k in seq_len(n_windows)) {
   tr_start <- 1 + (k - 1) * step_weeks
   tr_end <- tr_start + training_weeks - 1
   te_start <- tr_end + 1
   te_end <- te_start + testing_weeks - 1
-
   train_X <- excess_returns[tr_start:tr_end, , drop = FALSE]
   test_X <- excess_returns[te_start:te_end, , drop = FALSE]
-
-  sr_list[[k]] <- eval_window(train_X, test_X, cov_fun = cov_fun, omega = omega)
+  sr_list[[k]] <- eval_window(train_X, test_X,
+    cov_fun         = cov_fun,
+    mean_estimators = mean_estimators,
+    omega           = omega
+  )
   test_start_dates[k] <- dates[te_start]
 }
-
 sr_mat <- do.call(rbind, sr_list)
 sr_df <- data.frame(TestStart = test_start_dates, sr_mat, check.names = FALSE)
 ```
 
-## Portfolio performance
-
-Annualised Sharpe per window, summarised (mean and SD) over three environments.
-Windows are assigned to a sub-period by their test-window start date.
-
-<!-- Alternatives: require the whole test window inside the range, or use te_end. -->
-
-```{r a4-subperiods, include=FALSE, echo=FALSE}
+```{r a-summaries-metrics, include=FALSE}
+# Sub-period masks (assigned by test-window start date)
 fc_lo <- as.Date("2008-10-06")
 fc_hi <- as.Date("2011-08-03") # Financial Crisis
 pd_lo <- as.Date("2020-02-26")
 pd_hi <- as.Date("2023-12-29") # Pandemic
 
 masks <- list(
-  Full = rep(TRUE, nrow(sr_df)),
+  Full            = rep(TRUE, nrow(sr_df)),
   FinancialCrisis = sr_df$TestStart >= fc_lo & sr_df$TestStart <= fc_hi,
-  Pandemic = sr_df$TestStart >= pd_lo & sr_df$TestStart <= pd_hi
+  Pandemic        = sr_df$TestStart >= pd_lo & sr_df$TestStart <= pd_hi
 )
+n_full <- sum(masks$Full)
+n_fc <- sum(masks$FinancialCrisis)
+n_pd <- sum(masks$Pandemic)
 
 strategy_cols <- setdiff(colnames(sr_df), "TestStart")
-
-summarise_period <- function(mask) {
-  sub <- sr_df[mask, strategy_cols, drop = FALSE]
+summarise_period <- function(df, mask, cols) {
+  sub <- df[mask, cols, drop = FALSE]
   data.frame(
     Mean = sapply(sub, mean, na.rm = TRUE),
     SD = sapply(sub, sd, na.rm = TRUE)
   )
 }
-
-summary_full <- summarise_period(masks$Full)
-summary_fc <- summarise_period(masks$FinancialCrisis)
-summary_pd <- summarise_period(masks$Pandemic)
+summary_full <- summarise_period(sr_df, masks$Full, strategy_cols)
+summary_fc <- summarise_period(sr_df, masks$FinancialCrisis, strategy_cols)
+summary_pd <- summarise_period(sr_df, masks$Pandemic, strategy_cols)
 
 cat(
   "Windows -> Full:",
@@ -498,381 +509,477 @@ cat(
   sum(masks$Pandemic),
   "\n"
 )
-```
-
-```{r a4-tables, include=TRUE, echo=FALSE}
-# kept old working for posterity - in case you were curious :)
-# kable(
-#   summary_full[order(-summary_full$Mean), ],
-#   digits = 4,
-#   caption = "Annualised Sharpe Ratio - Full Period (mean, SD)",
-#   booktabs = TRUE
-# ) %>%
-#   kable_styling(
-#     full_width = FALSE,
-#     position   = "center"
-#   ) 
-# 
-# kable(
-#   summary_fc[order(-summary_fc$Mean), ],
-#   digits = 4,
-#   caption = "Annualised Sharpe Ratio - Financial Crisis (mean, SD)",
-#   booktabs = TRUE
-# ) %>%
-#   kable_styling(
-#     full_width = FALSE,
-#     position   = "center"
-#   ) 
-# 
-# kable(
-#   summary_pd[order(-summary_pd$Mean), ],
-#   digits = 4,
-#   caption = "Annualised Sharpe Ratio - Pandemic (mean, SD)",
-#   booktabs = TRUE
-# ) %>%
-#   kable_styling(
-#     full_width = FALSE,
-#     position   = "center"
-#   ) 
 
 summary_full$Strategy <- rownames(summary_full)
 summary_fc$Strategy <- rownames(summary_fc)
 summary_pd$Strategy <- rownames(summary_pd)
-
 combined_summary <- summary_full |>
-  left_join(summary_fc, by = "Strategy", suffix = c("_full", "_fc")) |>
-  left_join(summary_pd, by = "Strategy") |>
-  rename(Mean_pd = Mean, SD_pd = SD) |>
-  relocate("Strategy") |>
-  # sort into custom order (benchmark EWP at top, -> by Estimator -> by MV/TP)
-  mutate(
-    is_ewp = Strategy == "EWP", 
-    Estimator = sub(".*_", "", Strategy), # get suffix
-    Prefix = sub("_.*", "", Strategy) # get prefix    
-  ) |>
-  arrange(desc(is_ewp), Estimator, Prefix) |>
-  select(-is_ewp, -Estimator, -Prefix) # Remove temp cols
+  dplyr::left_join(summary_fc, by = "Strategy", suffix = c("_full", "_fc")) |>
+  dplyr::left_join(summary_pd, by = "Strategy") |>
+  dplyr::rename(Mean_pd = Mean, SD_pd = SD) |>
+  dplyr::relocate("Strategy")
 
-kable(
-  combined_summary,
-  digits = 4,
-  caption = "Annualised Sharpe ratio across periods (higher Sharpe ratio is better - means strategy is generating more return per unit of risk). BE note: show column for MV vs TP then remove from strategy ID?* ask group",
-  booktabs = TRUE,
-  linesep = c("\\addlinespace", "", "", ""),
-  col.names = c("Strategy", "Mean", "SD", "Mean", "SD", "Mean", "SD")
-) |>
-  kable_styling(
-    full_width = FALSE,
-    position = "center"
-  ) |>
-  add_header_above(c(
-    " " = 1,
-    "Full Period" = 2,
-    "Financial Crisis" = 2,
-    "Pandemic" = 2
-  )) |>
-  column_spec(
-    2,
-    bold = combined_summary$Mean_full ==
-      max(combined_summary$Mean_full, na.rm = TRUE),
-    color = ifelse(
-      combined_summary$Mean_full ==
-        max(combined_summary$Mean_full, na.rm = TRUE),
-      "#1b9e77",
-      "black"
-    )
-  ) |>
-  # Highlight the highest value in Financial Crisis (Column 4)
-  column_spec(
-    4,
-    bold = combined_summary$Mean_fc ==
-      max(combined_summary$Mean_fc, na.rm = TRUE),
-    color = ifelse(
-      combined_summary$Mean_fc == max(combined_summary$Mean_fc, na.rm = TRUE),
-      "#1b9e77",
-      "black"
-    )
-  ) |>
-  # Highlight the highest value in Pandemic (Column 6)
-  column_spec(
-    6,
-    bold = combined_summary$Mean_pd ==
-      max(combined_summary$Mean_pd, na.rm = TRUE),
-    color = ifelse(
-      combined_summary$Mean_pd == max(combined_summary$Mean_pd, na.rm = TRUE),
-      "#1b9e77",
-      "black"
-    )
+row_order_hl <- c("EWP", paste0("MV_", est_order), paste0("TP_", est_order))
+combined_summary <- combined_summary[
+  match(row_order_hl, combined_summary$Strategy),
+]
+
+# per window mean-variance vs tagency portfolio equality (up to sign)
+# & St-MSh == Sample check
+mv <- as.matrix(sr_df[, grep("^MV_", names(sr_df))])
+tp <- as.matrix(sr_df[, grep("^TP_", names(sr_df))])
+mvtp_maxdiff <- max(abs(abs(mv) - abs(tp)), na.rm = TRUE)
+stm_check <- isTRUE(all.equal(sr_df$MV_Sample, sr_df$MV_StMSh))
+
+# ========================================================================== #
+# scale sensitive out of sample metrics
+# -> created as companion to the headline table
+oos_metrics <- function(X, mean_estimators, cov_fun,
+                        training_weeks, testing_weeks, step_weeks, omega = 1) {
+  n_windows <- floor((nrow(X) - training_weeks - testing_weeks) / step_weeks) + 1
+  est_names <- names(mean_estimators)
+  strat <- c(paste0("MV_", est_names), paste0("TP_", est_names), "EWP")
+  p <- ncol(X)
+
+  # [1] Assets (p), [2] Strategy Name, [3] Rolling Window Step
+  W_arr <- array(NA_real_,
+    dim = c(p, length(strat), n_windows),
+    dimnames = list(NULL, strat, NULL)
   )
-```
+  R_arr <- array(NA_real_,
+    dim = c(testing_weeks, length(strat), n_windows),
+    dimnames = list(NULL, strat, NULL)
+  )
+  sumz <- matrix(NA_real_, n_windows, length(est_names),
+    dimnames = list(NULL, est_names)
+  )
+  for (k in seq_len(n_windows)) {
+    tr_start <- 1 + (k - 1) * step_weeks
+    tr_end <- tr_start + training_weeks - 1
+    te_start <- tr_end + 1
+    te_end <- te_start + testing_weeks - 1
+    train_X <- X[tr_start:tr_end, , drop = FALSE]
+    test_X <- X[te_start:te_end, , drop = FALSE]
+    Sigma_inv <- solve(cov_fun(train_X))
 
-Notes:
+    # Z = \Sigma^{-1} \mu
+    Z <- sapply(mean_estimators, function(f) as.vector(Sigma_inv %*% f(train_X))) # p x 8
+    sumz[k, ] <- colSums(Z)
 
-- Simple wins?  "EPW has no esimation error"
-  - `EWP` gives the highest return for the amount of risk taken over the entire 23-year period. It was highly consistent and only got beaten once during the financial crisis. !Check this with literature*
-finance: complex optimization models often fail out-of-sample due to estimation error, while the "naive" $1/N$ portfolio remains highly robust.
-- shrinkage helps in turbulant periods
-  - Tangency portfolio using the OLSh estimator (TP_OLSh) was best (2.3099* - code val using R)
-  - Specific shrinkage techniques better at handling the extreme volatility and structural breaks of 2008
-- estimation risk 
-  - average weekly return from 'traditional' MV_Sample and TP_Sample portfolios perform relatively poorly.  Overweight assets that simply got lucky in the training window -> error maximisation
-  - many advanced estimators result in negative Sharpe ratios during the Pandemic (e.g., TP_Jorion at -2.2950), 
-  - due to how sensitive optimisation is to noisy input data? - Check during session
+    # W_mv = Z / \omega  |  W_tp = Z / (\mathbf{1}^T Z)
+    W <- cbind(
+      Z / omega, # MV (gamma = 1), unnormalised
+      sweep(Z, 2, colSums(Z), "/"), # TP, weights sum to 1
+      rep(1 / p, p)
+    ) # EWP
+    colnames(W) <- strat
+    W_arr[, , k] <- W
+    R_arr[, , k] <- test_X %*% W
+  }
+  list(W = W_arr, R = R_arr, sumz = sumz, strat = strat)
+}
+summarise_oos <- function(res, mask = rep(TRUE, dim(res$R)[3]), omega = 1, w_stat = mean) {
+  W <- res$W[, , mask, drop = FALSE]
+  R <- apply(res$R[, , mask, drop = FALSE], 2, c) # stitched weekly series
+  ann_ret <- 52 * colMeans(R)
+  ann_vol <- sqrt(52) * apply(R, 2, sd)
+  sharpe <- apply(R, 2, ann_sharpe)
+  ce <- ann_ret - (omega / 2) * ann_vol^2 # realised certainty-equivalent
+  gross <- apply(apply(abs(W), c(2, 3), sum), 1, w_stat)
+  maxw <- apply(apply(abs(W), c(2, 3), max), 1, w_stat)
+  nW <- dim(W)[3]
+  turn <- if (nW > 1) {
+    dW <- abs(W[, , -1, drop = FALSE] - W[, , -nW, drop = FALSE])
+    apply(apply(dW, c(2, 3), sum), 1, w_stat)
+  } else {
+    rep(NA_real_, length(res$strat))
+  }
+  est_names <- colnames(res$sumz)
+  flips <- setNames(rep(NA_real_, length(res$strat)), res$strat)
+  flips[paste0("TP_", est_names)] <- colSums(res$sumz[mask, , drop = FALSE] < 0)
+  data.frame(
+    AnnExRet = ann_ret, AnnVol = ann_vol, Sharpe = sharpe, CE = ce,
+    GrossLev = gross, MaxWt = maxw, Turnover = turn,
+    FlipWin = flips[res$strat], row.names = res$strat
+  )
+}
+res_metrics <- oos_metrics(excess_returns, mean_estimators, cov_fun,
+  training_weeks, testing_weeks, step_weeks,
+  omega = omega
+)
+tab_full <- summarise_oos(res_metrics, masks$Full, omega = omega)
+row_order <- c("EWP", paste0("MV_", est_order), paste0("TP_", est_order))
+tab_full  <- tab_full[row_order, ]
 
+# ========================================================================== #
+# Debugging / tracability check: 1'Sigma^{-1}mu ~ 0
+# > If the sum of unnormalised weights approaches zero the tangency portfolio
+# > weights will explode to infinity (^ massive leverage).
+# > This gets the worst-case window for the DMSh estimator to explore later
+k_bad <- which.min(abs(res_metrics$sumz[, "DMSh"]))
+sumz_bad <- res_metrics$sumz[k_bad, "DMSh"]
+lev_bad <- sum(abs(res_metrics$W[, "TP_DMSh", k_bad]))
+date_bad <- sr_df$TestStart[k_bad]
+min_sumz <- apply(abs(res_metrics$sumz), 2, min)
 
-- `O-LSh` performed well?
-
-- Expand these points...
-- To do: need to plot graphs to mirror the style used in the lectures
-
-```{r a4-gics, include=TRUE, echo=FALSE}
-gics <- as.data.frame(read_excel("data/DA441_GICS_Sectors.xlsx"))
-
-# names(gics) # headers
+# ========================================================================== #
+# GICS (Global Industry Classification Standard) sector composition of
+# sampled companies
 id_col <- "DA441_column_name"
 sector_col <- "GICS Sector Name"
 
 sel_gics <- gics[gics[[id_col]] %in% selected, ]
+sector_tab <- as.data.frame(table(sel_gics[[sector_col]]))
 nrow(sel_gics) # check: should be 100 (Y)
 
-sector_tab <- as.data.frame(table(sel_gics[[sector_col]]))
-colnames(sector_tab) <- c("Sector", "Count") 
+colnames(sector_tab) <- c("Sector", "Count")
 sector_tab <- sector_tab[order(-sector_tab$Count), ]
-```
 
-```{r a4-gics-table, include=TRUE, echo=FALSE}
-kable(
-  sector_tab,
-  row.names = FALSE,
-  booktabs = TRUE,
-  caption = "GICS sector composition of the 100 sampled companies (Group 12)"
-) %>%
-  kable_styling(full_width = FALSE, position = "center")
-```
-
-```{r a4-gics-figures, include=TRUE, echo=FALSE}
-# Doughnut chart
-okabe_ito <- c("#E69F00","#56B4E9","#009E73","#F0E442",
-               "#0072B2","#D55E00","#CC79A7","#FFFFF0",
-               "#999999", "#D4AEE3", "#B8E986")
-
-p_donut <- ggplot(sector_tab, aes(x = 2, y = Count, fill = Sector)) +
-  geom_col(width = 1, color = "white") +
-  coord_polar(theta = "y") +
-  xlim(0.5, 2.5) +
-  geom_text(
-    aes(label = paste0(round(100 * Count / sum(Count), 1), "%")),
-    position = position_stack(vjust = 0.5),
-    size = 3
-  ) +
-  theme_void() +
-  scale_fill_manual(values = okabe_ito) +
-  labs(
-    title = "GICS sector composition (Group 12, 100 companies)",
-    fill = "GICS sector"
-  )
-
-if (knitr::is_html_output()) {
-  # plotly in html
-  plot_ly(
-    data = sector_tab, 
-    labels = ~Sector, 
-    values = ~Count, 
-    type = 'pie', 
-    hole = 0.6, 
-    marker = list(colors = okabe_ito),
-    textinfo = 'label+percent' 
-  ) %>%
-    layout(
-      title = "GICS sector composition (Group 12, 100 companies)",
-      showlegend = FALSE 
-    )
-} else {
-  p_donut
+# BE note: quick calc to get number and % of GICS companies used in part A
+# writeup
+get_sec <- function(s) {
+  v <- sector_tab$Count[sector_tab$Sector == s]
+  if (length(v)) v else 0L
 }
-
-p_bar <- ggplot(sector_tab, aes(x = Count, y = reorder(Sector, Count), text = paste0(round(100 * Count / sum(Count), 1), "%"))) +
-  geom_col(fill = "#0072B2") +
-  labs(
-    title = "GICS sector composition (Group 12, 100 companies)",
-    x = "Companies",
-    y = NULL
-  ) +
-  scale_x_continuous(limits = c(0, 15), breaks = seq(0, 100, by = 5)) +
-  theme_minimal() +
-  theme(
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor.y = element_blank(),
-    panel.grid.minor.x = element_blank()
-  )
-
-# Conditional Rendering for Bar
-if (knitr::is_html_output()) {
-  ggplotly(p_bar, tooltip = c("y", "x", "text"))
-} else {
-  p_bar
-}
+n_fin <- get_sec("Financials")
+n_it <- get_sec("Information Technology")
+n_comms <- get_sec("Communication Services")
+pct_it_comms <- round(100 * (n_it + n_comms) / sum(sector_tab$Count))
 ```
 
-## Interpretation of results and final report
+```{r a-inout-compute, include=FALSE}
+# In-sample vs out-of-sample tangency Sharpe, per window per estimator
+in_out_sample <- function(X, dates, mean_estimators, cov_fun,
+                          training_weeks, testing_weeks, step_weeks) {
+  n_windows <- floor((nrow(X) - training_weeks - testing_weeks) / step_weeks) + 1
+  rows <- list()
+  i <- 1
+  for (k in seq_len(n_windows)) {
+    tr_start <- 1 + (k - 1) * step_weeks
+    tr_end <- tr_start + training_weeks - 1
+    te_start <- tr_end + 1
+    te_end <- te_start + testing_weeks - 1
+    train_X <- X[tr_start:tr_end, , drop = FALSE]
+    test_X <- X[te_start:te_end, , drop = FALSE]
+    Sigma_inv <- solve(cov_fun(train_X))
+    for (nm in names(mean_estimators)) {
+      z <- as.vector(Sigma_inv %*% mean_estimators[[nm]](train_X))
+      w <- z / sum(z)
+      rows[[i]] <- data.frame(
+        window = k, Date = dates[te_start], estimator = nm,
+        denom = sum(z),
+        IS = ann_sharpe(train_X %*% w),
+        OOS = ann_sharpe(test_X %*% w)
+      )
+      i <- i + 1
+    }
+  }
+  out <- do.call(rbind, rows)
+  out$flip <- out$denom < 0
+  out
+}
+diag_df <- in_out_sample(
+  excess_returns, dates, mean_estimators, cov_fun,
+  training_weeks, testing_weeks, step_weeks
+)
+diag_df$estimator <- factor(diag_df$estimator, levels = est_order)
+inout_summary <- diag_df |>
+  dplyr::group_by(estimator) |>
+  dplyr::summarise(
+    `Windows flipped (%)` = mean(flip) * 100,
+    `OOS Sharpe (flipped)` = mean(OOS[flip], na.rm = TRUE),
+    `OOS Sharpe (not flipped)` = mean(OOS[!flip], na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(match(estimator, est_order))
+```
+
+---
+
+## Data preprocessing {#a1}
+
+The risk-free rate was first converted from a percentage to a decimal (i) before
+weekly excess returns were computed (ii) using Eq. \@ref(eq:excess-returns).
+\begin{equation}
+r^{\text{excess}}_{i,t} = r_{i,t} - r_{f,t}
+(\#eq:excess-returns)
+\end{equation}
+The risk-free rate was aligned to the return dates, and the excess returns were
+calculated using the `sweep()` function to subtract the risk-free vector across
+the rows. The resulting excess return matrix covers `r n_weeks` weekly
+observations for `r n_assets` companies, from `r as.character(min(dates))` to 
+`r as.character(max(dates))`. In **R**, both of these steps were implemented
+using:
+
+```{r a-data-prep-show, ref.label="a-data-prep", echo=TRUE, eval=FALSE}
+```
+
+## Selection of estimation models {#a2}
+
+Portfolios were constructed using all eight mean-vector estimators: the sample 
+mean, the four distribution-free shrinkage estimators of @Asimit15062026 
+(`St-MSh`, `D-MSh`, `O-LSh` and `T-LSh`), and the three established benchmarks 
+(`Wang`, `BOP` and `Jorion`). Please see Appendix
+\@ref(apx-method-mean-vec-estimators) for formal definitions of each estimator.
+
+Every mean estimator is paired with the one-parameter linear shrinkage estimator of @Ledoit2004365, `cov1Para`, rather than
+the sample covariance. `cov1Para` pulls the sample covariance $S$ toward a
+diagonal matrix $\mu I$ whose common variance
+$\mu = \tfrac{1}{p}\operatorname{tr}(S)$ is the average sample variance. 
+The strength of the pull is set automatically, with no tuning parameter, to minimise the covariance's mean-squared error (Appendix \@ref(apx-method-mean-vec-estimators)).
+The result is always positive-definite and well-conditioned. It is also
+distribution-free, needing only i.i.d. observations with finite fourth moments,
+the same assumptions that underlie the mean estimators of @Asimit15062026. The
+whole pipeline therefore rests on one consistent set of assumptions.
+
+The issue with the sample covariance is conditioning. Each
+training window gives $n = `r training_weeks`$ weekly observations on
+$p = `r n_assets`$ assets, a ratio of $n/p \approx `r fmt(np_ratio, 2)`$.
+Because $n > p$ the sample covariance can be inverted, but it is
+ill-conditioned. Its smallest eigenvalues are biased toward zero, so inverting
+the covariance amplifies the directions estimated least reliably
+[@Ledoit2004365], producing extreme, unstable weights whose errors accumulate
+out of sample.
+
+Both the problem and the fix are visible directly in our data. Averaged across
+the `r n_windows` windows (described in more detail in \@ref(a3)), the condition
+number of the sample covariance is
+`r fmt(cond_mean_sample, 0)` compared to `r fmt(cond_mean_shrink, 0)` under
+`cov1Para` - a `r round(cond_ratio_mean)`-fold improvement (medians
+`r fmt(cond_med_sample, 0)` vs `r fmt(cond_med_shrink, 0)`). 
+With the mean estimators and portfolio rule held fixed, the better conditioning 
+feeds straight into implementability. For the `O-LSh` tangency portfolio, 
+average gross leverage falls from 
+`r fmt(cond_tab["OLSh", "GrossLev_sample"], 1)` to
+`r fmt(cond_tab["OLSh", "GrossLev_cov1Para"], 1)` and monthly turnover from
+`r fmt(cond_tab["OLSh", "Turnover_sample"], 1)` to
+`r fmt(cond_tab["OLSh", "Turnover_cov1Para"], 1)`, with comparable reductions
+for every estimator (Appendix \@ref(apx-cond)). 
+
+## Portfolio construction and rolling-window setup {#a3}
+
+For each window and each mean estimator, two portfolios are built: a
+mean-variance portfolio with risk aversion $\gamma = 1$, giving the unnormalised
+weights $w_{MV}$, and a tangency portfolio, the same vector rescaled to sum to
+one, $w_{TP}$,
+$$
+w_{MV} = \Sigma^{-1}\hat\mu \, ,
+\qquad
+w_{TP} = \frac{\Sigma^{-1}\hat\mu}{\mathbf 1^\top\Sigma^{-1}\hat\mu}
+$$
+The equal-weight portfolio (EWP) is included as a
+benchmark. In our code, $\gamma$ is denoted `omega`. Throughout, $\Sigma$ is the
+`cov1Para` estimate selected in \@ref(a2), and $\hat\mu$ is estimated on the
+training window only, so no test-window information enters the weights.
+
+The rolling structure uses a 156-week (3-year) training window, a 4-week
+(1-month) testing window, and a 4-week step. Because the step equals the testing
+length, successive test windows are contiguous and non-overlapping. Over the 
+`r n_weeks`-week sample this gives 
+$$
+\lfloor(`r n_weeks` - 156 - 4)/4\rfloor + 1 = `r n_windows`
+$$
+out-of-sample windows, leaving the final 
+`r n_weeks - 156 - testing_weeks * n_windows` weeks uncovered by any test window. The implementation of this rolling structure in **R** was:
 
 ```{=latex}
-\clearpage
 \newpage
 ```
 
-### Rough working
-
-```{r, echo=FALSE, include=FALSE}
-u <- 2.3212
-d <- 3.113131
+```{r rolling-show, ref.label="a-rolling", echo=TRUE, eval=FALSE}
 ```
 
-<!-- prettier-ignore -->
-::: {.answer-wrapper}
-::: {.answer}
-$u=`r formatC(u, format="f", digits=5)`, \quad d=`r formatC(d, format="f", digits=5)`$
-:::
-:::
 
-### Testing
+## Portfolio performance {#a4}
 
-```{r testing, echo=FALSE, include=TRUE}
-# Confirm: the per-window Sharpe columns are equal (TRUE = equal to numerical tolerance)
-all.equal(sr_df$MV_Sample, sr_df$MV_StM)
-all.equal(sr_df$TP_Sample, sr_df$TP_StM)
+For every test window and every portfolio the annualised Sharpe ratio was
+calculated by taking the mean of the four weekly out-of-sample excess returns,
+dividing by their standard deviation and multiplying by $\sqrt{52}$. Each window
+is assigned to a market environment by its test-window start date.
+Of the `r n_windows` windows, `r n_fc` fall in the financial-crisis sub-period
+(`r format(fc_lo, "%d/%m/%Y")`-`r format(fc_hi, "%d/%m/%Y")`) and `r n_pd` in
+the pandemic sub-period 
+(`r format(pd_lo, "%d/%m/%Y")`-`r format(pd_hi, "%d/%m/%Y")`).
+These boundary dates are structural breakpoints identified by the Bai-Perron
+test on the S&P500 return series and the sub-periods correspond to statistically
+identified market regimes rather than arbitrary calendar choices. 
 
-# Why: St-MSh is the sample mean times a single scalar, so the ratio is constant
-tr    <- excess_returns[1:training_weeks, , drop = FALSE]
-mu_s  <- mean_estimators$Sample(tr)
-mu_st <- mean_estimators$StM(tr)
-c(min = min(mu_st / mu_s), max = max(mu_st / mu_s))   # min == max => one scalar multiple
-```
+Table \@ref(tab:a-headline-sharpe) shows the mean and standard deviation of the
+per-window Sharpe ratios over the full period and the two sub-periods. Each
+per-window Sharpe ratio is estimated from only four weekly returns, so it is
+inherently noisy. Cross-window standard deviations range from
+approximately `r fmt(min(summary_full$SD), 1)` to 
+`r fmt(max(summary_full$SD), 1)` over the full period, in 
+every case several times the magnitude of the corresponding mean
+(approximately `r fmt(min(summary_full$Mean), 2)` to 
+`r fmt(max(summary_full$Mean), 2)`). This dispersion is a property of the
+per-window definition. A companion summary for a Sharpe ratio computed on the
+stitched out-of-sample series is described in Appendix \@ref(apx-scale).
 
-```{r a-additional-metrics, echo=FALSE, include=TRUE}
-# ---- cov1Para vs sample covariance: conditioning, leverage, turnover, OOS perf ----
-# Mean estimators and portfolio construction are held fixed; only Sigma changes.
+Note that the Sample and `St-MSh` rows in Table \@ref(tab:a-headline-sharpe) are
+identical in every period. This is a structural property of the Sharpe ratio. `St-MSh` scales the sample mean by a positive constant
+that the Sharpe ratio cannot detect. This is explored further in Appendix
+\@ref(apx-stmsh-vs-sample) (the same identity is also present in Table 3 of
+@Asimit15062026).
 
-run_diag <- function(cov_fun) {
-  conds  <- numeric(n_windows)
-  W_list <- vector("list", n_windows)   # tangency weights per window (p x 8)
-  R_list <- vector("list", n_windows)   # OOS weekly returns per window (4 x 8)
+```{r a-headline-sharpe}
+hl <- combined_summary
+hl$Strategy <- sub("^(MV|TP)_", "", hl$Strategy)
+n_est <- length(est_order)
 
-  for (k in seq_len(n_windows)) {
-    tr_start <- 1 + (k - 1) * step_weeks
-    tr_end   <- tr_start + training_weeks - 1
-    te_start <- tr_end + 1
-    te_end   <- te_start + testing_weeks - 1
-    train_X  <- excess_returns[tr_start:tr_end, , drop = FALSE]
-    test_X   <- excess_returns[te_start:te_end, , drop = FALSE]
-
-    Sigma     <- cov_fun(train_X)
-    ev        <- eigen(Sigma, symmetric = TRUE, only.values = TRUE)$values
-    conds[k]  <- max(ev) / min(ev)                 # condition number of the estimate
-    Sigma_inv <- solve(Sigma)
-
-    W <- sapply(names(mean_estimators), function(nm) {
-      z <- as.vector(Sigma_inv %*% mean_estimators[[nm]](train_X))
-      z / sum(z)                                   # tangency weights
-    })
-    colnames(W) <- paste0("TP_", names(mean_estimators))
-    W_list[[k]] <- W
-    R_list[[k]] <- test_X %*% W
-  }
-
-  gross <- rowMeans(sapply(W_list, function(W) colSums(abs(W))))     # gross leverage
-  maxw  <- rowMeans(sapply(W_list, function(W) apply(abs(W), 2, max))) # max abs weight
-  turn  <- rowMeans(sapply(2:n_windows, function(k)                  # month-to-month turnover
-             colSums(abs(W_list[[k]] - W_list[[k - 1]]))))
-
-  R_all      <- do.call(rbind, R_list)                              # stitched OOS weeks x 8
-  oos_sharpe <- apply(R_all, 2, ann_sharpe)
-  oos_vol    <- apply(R_all, 2, sd, na.rm = TRUE) * sqrt(52)
-
-  tab <- data.frame(GrossLeverage = gross, MaxWeight = maxw, Turnover = turn,
-                    OOS_Vol = oos_vol, OOS_Sharpe = oos_sharpe,
-                    row.names = names(gross))
-  list(mean_cond = mean(conds), table = round(tab, 3))
-}
-
-d_shrink <- run_diag(cov1Para)
-d_sample <- run_diag(function(X) cov(X))
-
-cat("Mean condition number   cov1Para:", round(d_shrink$mean_cond, 1),
-    "  sample:", round(d_sample$mean_cond, 1), "\n\n")
-
-compare <- merge(d_shrink$table, d_sample$table,
-                 by = "row.names", suffixes = c("_cov1Para", "_sample"))
-compare
-
-# Test no.2 with unweighted ====
-run_diag <- function(cov_fun, normalise = FALSE) {
-  conds  <- numeric(n_windows)
-  W_list <- vector("list", n_windows)
-
-  for (k in seq_len(n_windows)) {
-    tr_start <- 1 + (k - 1) * step_weeks
-    tr_end   <- tr_start + training_weeks - 1
-    train_X  <- excess_returns[tr_start:tr_end, , drop = FALSE]
-
-    Sigma     <- cov_fun(train_X)
-    ev        <- eigen(Sigma, symmetric = TRUE, only.values = TRUE)$values
-    conds[k]  <- max(ev) / min(ev)
-    Sigma_inv <- solve(Sigma)
-
-    W <- sapply(names(mean_estimators), function(nm) {
-      z <- as.vector(Sigma_inv %*% mean_estimators[[nm]](train_X))
-      if (normalise) z / sum(z) else z          # raw MV weights by default
-    })
-    colnames(W) <- names(mean_estimators)
-    W_list[[k]] <- W
-  }
-
-  gross <- sapply(W_list, function(W) colSums(abs(W)))               # 8 x n_windows
-  maxw  <- sapply(W_list, function(W) apply(abs(W), 2, max))
-  turn  <- sapply(2:n_windows, function(k) colSums(abs(W_list[[k]] - W_list[[k - 1]])))
-
-  tab <- data.frame(
-    GrossLev_median = apply(gross, 1, median),
-    GrossLev_p95    = apply(gross, 1, quantile, 0.95),   # exposes the unstable windows
-    MaxWeight_med   = apply(maxw,  1, median),
-    Turnover_median = apply(turn,  1, median),
-    row.names = names(mean_estimators)
+kable(hl,
+  digits = 4, booktabs = TRUE, row.names = FALSE,
+  caption = "Mean and standard deviation of the per-window annualised Sharpe ratios. The best mean and standard deviation in each environment are highlighted. Because the Sharpe ratio is invariant to positive rescaling of the weights, St-MSh reproduces the Sample rows exactly, and the mean-variance and tangency portfolios coincide except in net-short windows where the sign flips.",
+  linesep = "",
+  col.names = c("Strategy", "Mean", "SD", "Mean", "SD", "Mean", "SD")
+) |>
+  kable_styling(
+    full_width = FALSE, position = "center", 
+    latex_options = "hold_position"
+  ) |>
+  add_header_above(c(" " = 1, "Full period" = 2, "Financial crisis" = 2, "Pandemic" = 2)) |>
+  pack_rows(index = c(
+    "Benchmark" = 1,
+    "Mean-variance portfolio" = n_est,
+    "Tangency portfolio" = n_est
+  )) |>
+  # adds latex spacing (just for pdf)
+  row_spec(c(5, 13), extra_latex_after = "\\addlinespace") |>
+  column_spec(2,
+    bold = combined_summary$Mean_full == max(combined_summary$Mean_full, na.rm = TRUE),
+    color = ifelse(combined_summary$Mean_full == max(combined_summary$Mean_full, na.rm = TRUE), "#1b9e77", "black")
+  ) |>
+  column_spec(4,
+    bold = combined_summary$Mean_fc == max(combined_summary$Mean_fc, na.rm = TRUE),
+    color = ifelse(combined_summary$Mean_fc == max(combined_summary$Mean_fc, na.rm = TRUE), "#1b9e77", "black")
+  ) |>
+  column_spec(6,
+    bold = combined_summary$Mean_pd == max(combined_summary$Mean_pd, na.rm = TRUE),
+    color = ifelse(combined_summary$Mean_pd == max(combined_summary$Mean_pd, na.rm = TRUE), "#1b9e77", "black")
+  ) |>
+  column_spec(3,
+    bold = combined_summary$SD_full == min(combined_summary$SD_full, na.rm = TRUE),
+    color = ifelse(combined_summary$SD_full == min(combined_summary$SD_full, na.rm = TRUE), "#1b9e77", "black")
+  ) |>
+  column_spec(5,
+    bold = combined_summary$SD_fc == min(combined_summary$SD_fc, na.rm = TRUE),
+    color = ifelse(combined_summary$SD_fc == min(combined_summary$SD_fc, na.rm = TRUE), "#1b9e77", "black")
+  ) |>
+  column_spec(7,
+    bold = combined_summary$SD_pd == min(combined_summary$SD_pd, na.rm = TRUE),
+    color = ifelse(combined_summary$SD_pd == min(combined_summary$SD_pd, na.rm = TRUE), "#1b9e77", "black")
   )
-  list(median_cond = median(conds), table = round(tab, 3))
-}
+```
 
-d_shrink <- run_diag(cov1Para)                 # raw MV weights, median summaries
-d_sample <- run_diag(function(X) cov(X))
 
-cat("Condition number (median)  cov1Para:", round(d_shrink$median_cond, 1),
-    " sample:", round(d_sample$median_cond, 1), "\n\n")
+## Interpretation of results and final report {#a5}
 
-merge(d_shrink$table, d_sample$table, by = "row.names",
-      suffixes = c("_cov1Para", "_sample"))
+<!-- BE note: was quite brutal here to get this down -->
+<!-- - Aimed for ~1/2 to 1 page max -->
+
+Optimised portfolios are only as reliable as the expected returns they are built
+on, and those estimates carry substantial estimation error. This report tests
+whether shrinkage methods designed to temper that noise deliver better
+risk-adjusted returns than the classical sample mean for an investor rebalancing
+monthly over two decades [@Asimit15062026]. Using weekly excess returns for
+`r no_companies` S&P 500 companies 
+(`r format(min(dates), "%B %Y")`-`r format(max(dates), "%B %Y")`), 
+eight ways of estimating expected returns were compared, each paired with the
+`cov1Para` covariance estimator [@Ledoit2004365] and benchmarked against an
+equal-weight (1/N) portfolio. Every method was evaluated with a rolling window
+that mirrors live practice, fiting on the previous three years, testing on the
+next unseen month, then advancing, giving `r n_windows` out-of-sample tests with
+no look-ahead bias. Performance was summarised by the annualised Sharpe ratio
+over the full period, the 2008 financial crisis, and the COVID-19 pandemic
+(Table \@ref(tab:a-headline-sharpe)).
+
+The mean-variance and tangency portfolios hold the same positions at different
+scales (tangency rescales the weights to sum to one) so within any window
+their Sharpe ratios are identical bar a possible sign flip (the per-window
+magnitudes agree to within `r formatC(mvtp_maxdiff, format = "e", digits = 1)`).
+The two coincide in every window where the portfolio is not net-short, which
+covers almost the entire pandemic. Over other periods the sign flip lifts the
+tangency full-period mean above mean-variance for the stronger estimators
+(`TP_OLSh`
+`r fmt(summary_full["TP_OLSh", "Mean"], 4)` versus `MV_OLSh`
+`r fmt(summary_full["MV_OLSh", "Mean"], 4)`). The economically meaningful
+difference is cost, not Sharpe ratio. Because tangency weights sum to one,
+leverage and turnover are far lower (for `O-LSh`, average leverage falls from
+`r fmt(tab_full["MV_OLSh", "GrossLev"], 1)` to
+`r fmt(tab_full["TP_OLSh", "GrossLev"], 1)`), making tangency preferable in
+practice. The exception is when the normaliser nears zero and weights explode
+(`r format(date_bad, "%d %B %Y")` drives `TP_DMSh` leverage to roughly
+`r fmt(lev_bad, 0)`; Appendix \@ref(apx-pathology)).
+
+Across estimators, the standout result is how hard the naïve benchmark is to
+beat. The equal-weight portfolio posts the highest full-period Sharpe
+(`r fmt(summary_full["EWP", "Mean"], 4)`) and lowest full-period dispersion,
+overtaken only once, by `TP_OLSh` in the financial crisis
+(`r fmt(summary_fc["TP_OLSh", "Mean"], 4)` versus
+`r fmt(summary_fc["EWP", "Mean"], 4)`), consistent with the 1/N result of
+@DeMiguel2009. Among optimised methods only mean shrinkage keeps up. Under the tangency construction, `O-LSh` and `D-MSh` roughly double the sample mean's full-period Sharpe ratio 
+(`r fmt(summary_full["TP_OLSh", "Mean"], 4)` and
+`r fmt(summary_full["TP_DMSh", "Mean"], 4)` versus 
+`r fmt(summary_full["TP_Sample", "Mean"], 4)`), with `D-MSh` the most consistent across regimes and the best optimised pandemic performer 
+(`r fmt(summary_pd["TP_DMSh", "Mean"], 4)`). 
+The raw sample mean turns negative in the financial crisis 
+(`r fmt(summary_fc["MV_Sample", "Mean"], 4)`) through error-maximisation,
+`St-MSh` reproduces the sample rows exactly (Appendix
+\@ref(apx-stmsh-vs-sample)), `Jorion` is too volatile to trust
+(SD `r fmt(summary_full["MV_Jorion", "SD"], 2)`, rising to
+`r fmt(summary_pd["TP_Jorion", "SD"], 2)` in the pandemic), and `BOP` is the
+weakest overall, with the most net-short flips (`r tab_full["TP_BOP",
+"FlipWin"]` windows). The uniformly weak pandemic figures are partly due to our
+group's sector draw (Figure \@ref(fig:gics-fig); full company list in Appendix
+\@ref(apx-stocks)): Financials is the largest single exposure (`r n_fin` of
+100), and while Information Technology sits mid-pack (`r n_it`), the tech-led
+sectors that drove the post-2020 rally are thin as a bloc with IT and
+Communication Services (`r n_comms`) together only accounting for 
+`r pct_it_comms`% of the universe. No estimator can manufacture exposure that 
+isn't there and an equal-weighted portfolio sidesteps this problem by never guessing. 
+For our 100 stocks, `O-LSh` and `D-MSh` are worth using over the raw sample
+mean, but once leverage and turnover are counted, a plain equal-weighted
+portfolio remains a strong, cheap benchmark the optimisers struggle to beat out
+of sample (Appendix \@ref(apx-scale)).
+
+
+```{r gics-table, eval=FALSE}
+# BE note: not loaded as opted for the bar chart below instead
+# Kept for posterity
+kable(sector_tab,
+  row.names = FALSE, booktabs = TRUE,
+  caption = "GICS sector composition of our 100 sampled companies (Group 12)."
+) |>
+  kable_styling(full_width = FALSE, position = "center")
+```
+
+```{r gics-fig, fig.cap="GICS sector composition of the 100 sampled companies (Group 12), shown as a horizontal bar chart with sectors ordered by company count. Financials is the largest exposure, while Communication Services and the wider tech-led bloc are comparatively underweight.", fig.width=5.5, fig.height=2.8}
+ggplot(sector_tab, aes(x = Count, y = reorder(Sector, Count))) +
+  geom_col(fill = "#0072B2") +
+  labs(x = "Companies", y = NULL) +
+  scale_x_continuous(limits = c(0, 15), breaks = seq(0, 15, by = 5)) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
 ```
 
 ```{=latex}
-\clearpage
 \newpage
 ```
 
 # Coursework 2 {-}
 
----
-
 # Shrinkage Generalised Linear Models for Insurance Claim Severity Estimation
 
 ```{=latex}
-% Set up with custom shortened header to avoid overlap
+% Custom shortened header to avoid overlap
 \sectionmark{Shrinkage GLMs for Insurance Claim Severity Estimation}
 ```
 
-## First part
+---
 
-```{=latex}
-\newpage
-```
 
 <!-- # Conclusions
 
@@ -888,6 +995,7 @@ TBI -->
 <!-- ``` -->
 
 ```{=latex}
+\clearpage
 \newpage
 \section*{Appendices}
 \addcontentsline{toc}{section}{Appendices}
@@ -897,15 +1005,474 @@ TBI -->
 
 ```{=latex}
 \titleformat{\section}[block]{\LARGE\bfseries}{\thesection}{1em}{}
-\renewcommand{\thesection}{\Roman{section}}
-\renewcommand{\thesubsection}{\thesection-\Alph{subsection}}
+\renewcommand{\thesection}{\arabic{section}}
+\renewcommand{\thesubsection}{\thesection.\arabic{subsection}}
 \renewcommand{\thesubsubsection}{\thesubsection.\arabic{subsubsection}}
 \setcounter{section}{0}
 ```
 
-# Supplemental methodology {#apd-supplementary-methods}
+# Coursework 1: Supplemental methodology {#apd-supplementary-methods}
 
-TBI
+## Mean-vector estimators {#apx-method-mean-vec-estimators}
+
+Every estimator starts from the sample mean vector, $\bar X$. The shrinkage
+estimators adjust $\bar X$ using the unbiased sample covariance of the returns,
+$S$, and the grand mean $\bar X_g = \tfrac{1}{p}\mathbf 1^\top \bar X$, the
+average of $\bar X$ across the $p$ assets. Each estimator maps the $n \times p$
+matrix of training returns to its own length-$p$ estimate, and the estimators
+are compared by mean squared error (MSE).
+
+```{asis, echo=knitr::is_html_output()}
+| Estimator                                                   | Shrinks toward                | How it shrinks                                             | Loss      | Source          |
+| ----------------------------------------------------------- | ----------------------------- | ---------------------------------------------------------- | --------- | --------------- |
+| Sample mean                                                 | no shrinkage                  | Unbiased. High variance when $p \approx n$                 | -         | -               |
+| Stein Multiplicative Shrinkage `St-MSh`                     | zero                          | One scalar $\hat c \in [0,1)$ applied to every asset       | MSE       | @Asimit15062026 |
+| Diagonal Multiplicative Shrinkage `D-MSh`                   | zero                          | Asset-specific scalars $\hat c_k$ (suits differing scales) | MSE       | @Asimit15062026 |
+| One-Parameter Linear Shrinkage `O-LSh`                      | grand mean                    | One intensity $\hat\delta$                                 | MSE       | @Asimit15062026 |
+| Two-Parameter Linear Shrinkage `T-LSh`                      | grand mean, rescaled          | Intensity $\hat\delta$ plus target scaling $\hat\xi$       | MSE       | @Asimit15062026 |
+| The shrinkage estimator in @Wang2014 `Wang`                 | grand mean                    | One intensity, estimated by U-statistics                   | MSE       | @Wang2014       |
+| The shrinkage estimator in @Bodnar2019 `BOP`                | precision-weighted grand mean | One intensity, built from $S^{+}$                          | invariant | @Bodnar2019     |
+| The Bayes-Stein shrinkage estimator in @Jorion1986 `Jorion` | precision-weighted grand mean | Bayes-Stein intensity                                      | invariant | @Jorion1986     |
+```
+
+```{r apx-mean-estimator-table, eval=knitr::is_latex_output()}
+est_tab <- data.frame(
+  Estimator = c(
+    "Sample mean",
+    "Stein Multiplicative Shrinkage (\\greentt{St-MSh})",
+    "Diagonal Multiplicative Shrinkage (\\greentt{D-MSh})",
+    "One-Parameter Linear Shrinkage (\\greentt{O-LSh})",
+    "Two-Parameter Linear Shrinkage (\\greentt{T-LSh})",
+    "Shrinkage estimator of Wang et al. (\\greentt{Wang})",
+    "Shrinkage estimator of Bodnar et al. (\\greentt{BOP})",
+    "Bayes--Stein estimator (\\greentt{Jorion})"
+  ),
+  Target = c(
+    "no shrinkage",
+    "zero",
+    "zero",
+    "grand mean",
+    "grand mean, rescaled",
+    "grand mean",
+    "precision-weighted grand mean",
+    "precision-weighted grand mean"
+  ),
+  How = c(
+    "Unbiased; high variance when $p \\approx n$",
+    "One scalar $\\hat c \\in [0,1)$ applied to every asset",
+    "Asset-specific scalars $\\hat c_k$ (suits differing scales)",
+    "One intensity $\\hat\\delta$",
+    "Intensity $\\hat\\delta$ plus target scaling $\\hat\\xi$",
+    "One intensity, estimated by U-statistics",
+    "One intensity, built from $S^{+}$",
+    "Bayes--Stein intensity"
+  ),
+  Loss = c(
+    "---", "MSE", "MSE", "MSE", "MSE", "MSE",
+    "invariant", "invariant"
+  ),
+  # manually coded
+  Source = c( 
+    "---",
+    "\\citet{Asimit15062026}", "\\citet{Asimit15062026}",
+    "\\citet{Asimit15062026}", "\\citet{Asimit15062026}",
+    "\\citet{Wang2014}", "\\citet{Bodnar2019}", "\\citet{Jorion1986}"
+  )
+)
+kable(est_tab,
+  booktabs = TRUE, escape = FALSE, row.names = FALSE,
+  caption = "Mean-vector estimators: shrinkage target, mechanism, and the loss each is designed to minimise.",
+  col.names = c("Estimator", "Shrinks toward", "How it shrinks", "Loss", "Source"),
+  linesep = ""
+) |>
+  kable_styling(
+    full_width = FALSE, position = "center",
+    font_size = 9, latex_options = "hold_position"
+  ) |>
+  column_spec(1, width = "13em") |>
+  column_spec(2, width = "8em") |>
+  column_spec(3, width = "13em")
+```
+
+
+The four estimators of @Asimit15062026 take the following explicit forms:
+
+$$
+\hat\mu^{\text{St-MSh}} = \hat c\,\bar X,\qquad
+\hat c = \frac{\|\bar X\|_p^2}{\|\bar X\|_p^2 + \tfrac{1}{np}\operatorname{tr}(S)},
+\qquad \|\bar X\|_p^2 = \tfrac{1}{p}\bar X^\top \bar X,
+$$
+$$
+\hat\mu^{\text{D-MSh}}_k = \hat c_k\,\bar X_k,\qquad
+\hat c_k = \frac{\bar X_k^2}{\bar X_k^2 + \tfrac{1}{n}S_{kk}},
+$$
+$$
+\hat\mu^{\text{O-LSh}} = (1-\hat\delta)\bar X + \hat\delta\,\bar X_g\mathbf 1,
+\qquad
+\hat\mu^{\text{T-LSh}} = (1-\hat\delta)\bar X + \hat\delta\hat\xi\,\bar X_g\mathbf 1.
+$$
+
+The amount of shrinkage in each estimator is set by a shrinkage intensity, 
+$\hat c$ or $\hat c_k$. This scalar multiplies the sample mean in `St-MSh` and
+`D-MSh`, or the weight $\hat\delta$ that mixes the sample mean with the target
+in `O-LSh` and `T-LSh`. All four intensities follow the same signal-to-noise
+trade-off. They shrink harder when the sample mean is noisier and less when the
+signal is stronger. `T-LSh` extends `O-LSh` by also scaling the target, and its
+oracle MSE (the MSE it would attain if the true mean and covariance were known)
+is strictly lower than that of `O-LSh`.
+
+The other three estimators, `Wang`, `BOP` and `Jorion`, are established
+benchmarks. `Wang` shares the target of `O-LSh`, the grand mean, but estimates
+its intensity with U-statistics rather than the sample plug-in estimates used
+above [@Wang2014]. `BOP` and `Jorion` instead shrink toward a precision-weighted
+grand mean, a minimum-variance combination formed with $S^{+}$ for `BOP` and
+$\tilde S^{-1}$ for `Jorion` [@Bodnar2019; @Jorion1986]. Both optimise the
+invariant loss rather than the MSE, weighting estimation errors by the precision
+matrix, the inverse covariance.
+
+## Why `St-MSh` reproduces the sample-mean Sharpe ratios exactly {#apx-stmsh-vs-sample}
+
+The identical Sample and `St-MSh` rows in Table \@ref(tab:a-headline-sharpe) are
+not a coincidence, nor a bug. The same identity appears in Table 3 of
+@Asimit15062026 where the `St-MSh` and Sample rows are identical in both the
+mean-variance and tangency panels (e.g. 0.274/1.352 in Panel A and 0.385/1.325
+in Panel B), despite their different universe (441 stocks), frequency (daily)
+and window scheme.
+
+This occurs because `St-MSh` multiplies the sample mean by a single scalar, 
+$\hat\mu^{\text{St-MSh}} = \hat c\,\bar X$, and this scalar is strictly
+positive, since the numerator of $\hat c$ is a squared norm and the denominator
+adds a sum of sample variances. Because the portfolio map is linear in
+$\hat\mu$, the scalar passes straight through to the weights,
+$$
+w_{MV}^{\text{St-MSh}}
+  = \Sigma^{-1}(\hat c\,\bar X)
+  = \hat c\, w_{MV}^{\text{Sample}},
+$$
+and a portfolio's weekly returns scale with its weights,
+$r_t(\hat c\,w) = \hat c\, r_t(w)$. The Sharpe ratio is a ratio of a mean to a
+standard deviation, so any positive constant cancels:
+$$
+\mathrm{SR}(\hat c\,w)
+  = \frac{\hat c\,\bar r}{\hat c\, s_r}\sqrt{52}
+  = \mathrm{SR}(w).
+$$
+The two strategies therefore have the same Sharpe ratio in every window, hence
+the same mean and the same standard deviation across windows. 
+<!-- Note to Vali: this is verified numerically: `r stm_check` -->
+For the tangency portfolio the cancellation happens one step earlier, in the
+weights themselves,
+$$
+w_{TP}^{\text{St-MSh}}
+  = \frac{\hat c\,\Sigma^{-1}\bar X}{\hat c\,\mathbf 1^\top\Sigma^{-1}\bar X}
+  = w_{TP}^{\text{Sample}},
+$$
+As a result `TP_StMSh` and `TP_Sample` are the same portfolio with identical leverage, turnover and net-short windows, as seen in Tables \@ref(tab:cond-table) and
+\@ref(tab:scale-metrics). Since $\hat c > 0$, `St-MSh` also flips sign in exactly the same windows as the sample mean.
+
+An interesting observation is that because the scalar $\hat c$ is
+re-estimated each window the stitched `MV_StMSh` series is not a global
+rescaling of `MV_Sample` as each month is scaled by a different constant. The
+per-window Sharpe statistics are identical, but the stitched Sharpe in Table
+\@ref(tab:scale-metrics) differs slightly, and every scale-sensitive metric
+(leverage, volatility, certainty-equivalent) shrinks by roughly $\hat c$ for the
+mean-variance portfolio. The other estimators avoid this equivalence
+because they change the direction. `D-MSh` rescales each asset differently, and
+the linear-shrinkage estimators mix $\bar X$ with a nonzero target. `St-MSh`'s
+shrinkage is visible in the scale-sensitive mean-variance metrics, but it is
+invisible to any scale-invariant evaluation of a linear portfolio rule.
+
+## Covariance conditioning: `cov1Para` vs sample covariance {#apx-cond}
+
+With the mean estimators and portfolio construction held fixed, replacing
+`cov1Para` by the sample covariance sharply worsens conditioning and
+implementability. Averaged across windows, the condition number of the
+covariance estimate is
+`r fmt(cond_mean_shrink, 1)` under `cov1Para` against
+`r fmt(cond_mean_sample, 1)` under the sample covariance, with medians of
+`r fmt(cond_med_shrink, 1)` and `r fmt(cond_med_sample, 1)`. Table
+\@ref(tab:cond-table) shows, for each mean estimator, the average gross
+leverage and turnover of the tangency portfolio under each covariance estimator,
+along with its Sharpe ratio on the stitched out-of-sample series.
+
+```{r cond-table}
+kbl_cond <- cond_tab[, c(
+  "GrossLev_cov1Para", "Turnover_cov1Para", "OOS_Sharpe_cov1Para",
+  "GrossLev_sample", "Turnover_sample", "OOS_Sharpe_sample"
+)]
+kable(kbl_cond,
+  digits = 2, booktabs = TRUE,
+  caption = "Tangency-portfolio implementability by covariance estimator. Gross leverage and turnover are averaged across windows, and Sharpe is computed on the stitched out-of-sample series.",
+  col.names = c("Gross lev.", "Turnover", "Sharpe", "Gross lev.", "Turnover", "Sharpe")
+) |>
+  kable_styling(full_width = FALSE, position = "center", latex_options = "hold_position") |>
+  add_header_above(c(" " = 1, "cov1Para" = 3, "Sample covariance" = 3))
+```
+
+```{=latex}
+\newpage
+```
+
+## Scale-sensitive out-of-sample metrics {#apx-scale}
+
+<!-- The annualised Sharpe ratio is invariant to positive rescaling of the weight -->
+<!-- vector. It cannot distinguish -->
+<!-- portfolios that are far apart in leverage, trading, and exposure, differences -->
+<!-- that determine whether a strategy can actually be run. The metrics in -->
+<!-- Table \@ref(tab:scale-metrics) are chosen because they respond to scale and they are computed on the stitched out-of-sample series, -->
+<!-- with the test windows concatenated in time order. This is why the Sharpe column -->
+<!-- differs from the per-window average in Table \@ref(tab:a-headline-sharpe). CE is -->
+<!-- the realised certainty-equivalent return, -->
+<!-- $\text{annual return} - \tfrac{\omega}{2}\,\text{annual variance}$, where -->
+<!-- $\omega = 1$ is the evaluation risk aversion, distinct from the $\gamma$ that -->
+<!-- scales the portfolio weights. Leverage and max weight are averaged across -->
+<!-- windows, turnover is per monthly rebalance, and net-short counts the windows with -->
+<!-- $c = \mathbf 1^\top\Sigma^{-1}\hat\mu < 0$. -->
+
+
+
+The annualised Sharpe ratio is invariant to positive rescaling of the weight
+vector, so it cannot see differences that matter for implementation. The metrics
+in Table \@ref(tab:scale-metrics) are not scale-invariant: they are computed on
+the stitched out-of-sample series (test windows concatenated in time order), so
+the Sharpe column differs from the per-window average in
+Table \@ref(tab:a-headline-sharpe). CE is the realised certainty-equivalent return,
+$\text{annual return} - \tfrac{\omega}{2}\,\text{annual variance}$ with
+$\omega = 1$; leverage and max weight are averaged across windows; turnover is per
+monthly rebalance; net-short counts windows with
+$c = \mathbf 1^\top\Sigma^{-1}\hat\mu < 0$.
+
+Note: Turnover compares target weights at consecutive rebalances and does not account for the drift of holdings by intervening returns. It therefore approximates true trading volume, and because the same simplification applies to every strategy, cross-strategy comparisons are unaffected.
+
+```{r scale-metrics}
+# options(knitr.kable.NA = "---")
+# best_sr <- tab_full$Sharpe == max(tab_full$Sharpe, na.rm = TRUE)
+# best_ce <- tab_full$CE == max(tab_full$CE, na.rm = TRUE)
+# kable(tab_full,
+#   digits = c(2, 2, 2, 1, 1, 2, 1, 0),
+#   format.args = list(big.mark = ","), booktabs = TRUE,
+#   caption = "Scale-sensitive out-of-sample metrics, full period (annualised weekly excess returns, omega = 1). Sharpe is on the stitched OOS series; CE is the realised certainty-equivalent; leverage and max weight are window averages; turnover is per monthly rebalance; net-short counts windows with negative sum(z).",
+#   col.names = c(
+#     "Ann. ex. ret.", "Ann. vol.", "Sharpe", "CE",
+#     "Gross lev.", "Max wt", "Turnover", "Net-short"
+#   ),
+#   linesep = c("\\addlinespace", rep(c("", "\\addlinespace"), length(mean_estimators)))
+# ) |>
+#   kable_styling(
+#     full_width = FALSE, position = "center", font_size = 9,
+#     latex_options = c("scale_down", "hold_position")
+#   ) |>
+#   add_header_above(c(" " = 1, "Performance" = 4, "Implementability" = 4)) |>
+#   column_spec(3, bold = best_sr, color = ifelse(best_sr, "#1b9e77", "black")) |>
+#   column_spec(4, bold = best_ce, color = ifelse(best_ce, "#1b9e77", "black"))
+options(knitr.kable.NA = "---")
+
+tf <- data.frame(
+  Strategy = sub("^(MV|TP)_", "", rownames(tab_full)),
+  tab_full, row.names = NULL, check.names = FALSE
+)
+
+best_sr <- tf$Sharpe == max(tf$Sharpe, na.rm = TRUE)
+best_ce <- tf$CE     == max(tf$CE,     na.rm = TRUE)
+
+kable(tf,
+  digits = c(0, 2, 2, 2, 1, 1, 2, 1, 0),   # leading 0 for Strategy
+  format.args = list(big.mark = ","), booktabs = TRUE, row.names = FALSE,
+  caption = "Scale-sensitive out-of-sample metrics, full period (annualised weekly excess returns, omega = 1). Sharpe is on the stitched OOS series; CE is the realised certainty-equivalent; leverage and max weight are window averages; turnover is per monthly rebalance; net-short counts windows with negative sum(z).",
+  col.names = c(
+    "Strategy", "Ann. ex. ret.", "Ann. vol.", "Sharpe", "CE",
+    "Gross lev.", "Max wt", "Turnover", "Net-short"
+  ),
+  linesep = ""
+) |>
+  kable_styling(
+    full_width = FALSE, position = "center", font_size = 9,
+    latex_options = c("scale_down", "hold_position")
+  ) |>
+  add_header_above(c(" " = 1, "Performance" = 4, "Implementability" = 4)) |>
+  pack_rows(index = c(
+    "Benchmark" = 1,
+    "Mean-variance portfolio" = length(est_order),
+    "Tangency portfolio" = length(est_order)
+  )) |>
+  column_spec(4, bold = best_sr, color = ifelse(best_sr, "#1b9e77", "black")) |>
+  column_spec(5, bold = best_ce, color = ifelse(best_ce, "#1b9e77", "black"))
+```
+
+## In-sample versus out-of-sample Sharpe {#apx-inout}
+
+The tangency weights are $\Sigma^{-1}\mu / (\mathbf 1^\top\Sigma^{-1}\mu)$; when
+the denominator $c = \mathbf 1^\top\Sigma^{-1}\mu$ is negative, the "maximiser" in
+fact returns the minimum-Sharpe portfolio, so the in-sample Sharpe goes large and
+negative. Counting those sign-flip windows is a useful diagnostic - they cluster
+in high-volatility regimes, exactly where the equal-weight portfolio wins because
+it never optimises. Table \@ref(tab:inout-table) reports, per estimator, the share
+of windows that flip and the average out-of-sample Sharpe in flipped versus
+non-flipped windows; Figure \@ref(fig:inout-fig) plots in- against out-of-sample
+Sharpe.
+
+As elsewhere, the Sample and `St-MSh` rows coincide exactly: since
+$\hat c > 0$, the sign of $c = \mathbf 1^\top\Sigma^{-1}\hat\mu$ is unchanged
+by the shrinkage, so the two estimators flip in precisely the same windows
+(Appendix \@ref(apx-stmsh-vs-sample)).
+
+```{r inout-table}
+kable(inout_summary,
+  digits = 2, booktabs = TRUE, 
+  caption = "Tangency sign-flip diagnostic by estimator: share of net-short windows and average out-of-sample Sharpe in flipped versus non-flipped windows.",
+  col.names = c(
+    "Estimator", "Windows flipped (\\%)",
+    "OOS Sharpe (flipped)", "OOS Sharpe (not flipped)"
+  ),
+  escape = FALSE
+) |>
+  kable_styling(full_width = FALSE, position = "center", latex_options = "hold_position")
+```
+
+```{r inout-fig, fig.cap="In-sample versus out-of-sample annualised Sharpe (tangency portfolios), by estimator. Net-short windows (sign flips) are highlighted.", fig.width=6.5, fig.height=4.5}
+ggplot(diag_df, aes(IS, OOS, color = flip)) +
+  geom_hline(yintercept = 0, linewidth = 0.3) +
+  geom_vline(xintercept = 0, linewidth = 0.3) +
+  geom_point(alpha = 0.5, size = 1) +
+  facet_wrap(~estimator) +
+  labs(x = "In-sample Sharpe", y = "Out-of-sample Sharpe", color = "Sign flip") +
+  theme_minimal()
+```
+
+## The $\mathbf 1^\top\Sigma^{-1}\hat\mu \approx 0$ pathology {#apx-pathology}
+
+Tangency gross leverage in window $k$ is $\sum_i |z_i| / |c_k|$ with
+$c_k = \mathbf 1^\top\Sigma^{-1}\hat\mu$. When a window lands with $c_k$ close to
+zero, the weights explode and every moment-based metric (return, volatility, CE,
+leverage, turnover) is dominated by that one window - while the window's
+per-window Sharpe is unchanged (it is scale-invariant), which is why the headline
+table cannot see the problem. The closest approach to zero across windows is
+smallest for D-MSh: at window `r k_bad` (`r format(date_bad, "%d %B %Y")`),
+$c \approx `r formatC(sumz_bad, format = "f", digits = 4)`$ drives TP_DMSh gross
+leverage to about `r fmt(lev_bad, 0)`. Table \@ref(tab:pathology-table) lists the
+minimum $|c|$ per estimator.
+
+```{r pathology-table}
+patho <- data.frame(
+  Estimator = est_order,
+  `Min |c|` = round(as.numeric(min_sumz[est_order]), 4),
+  check.names = FALSE
+)
+kable(patho,
+  row.names = FALSE, booktabs = TRUE,
+  caption = "Closest approach of $c = \\mathbf{1}^\\top \\Sigma^{-1}\\hat\\mu$ to zero, by estimator (smaller means a more unstable tangency window)."
+) |>
+  kable_styling(full_width = FALSE, position = "center", latex_options = "hold_position")
+```
+
+## Sampled companies and sector exposure {#apx-stocks}
+
+Figure \@ref(fig:gics-fig) (in \@ref(a5)) shows the sector composition. The full
+list of the 100 sampled companies, grouped by GICS sector, is in Table
+\@ref(tab:stocks-table).
+
+```{r stocks-table}
+stocks_tbl <- gics[
+  gics$DA441_column_name %in% selected,
+  c("company_ticker", "company_name", "GICS Sector Name")
+]
+stocks_tbl <- stocks_tbl[order(stocks_tbl[["GICS Sector Name"]], stocks_tbl$company_ticker), ]
+colnames(stocks_tbl) <- c("Ticker", "Company", "GICS Sector")
+idx <- rle(as.character(stocks_tbl$`GICS Sector`)) # sector run-lengths (table is sector-sorted)
+kable(stocks_tbl[, c("Ticker", "Company")],
+  booktabs = TRUE, longtable = TRUE,
+  caption = "Our (Group 12's) 100 sampled companies, grouped by GICS sector."
+) |>
+  kable_styling(full_width = FALSE, font_size = 9, latex_options = c("repeat_header")) |>
+  pack_rows(index = setNames(idx$lengths, idx$values))
+```
+
+## Our `r no_companies` stocks (Group `r group_num`) versus the full universe {#apx-universe}
+
+Raw returns, equal-weighted, on a log axis so the 2008 and 2020 drawdowns stay
+legible across 24 years. The full-441 equal-weight series is an equal-weight proxy
+for the market, not the cap-weighted S&P 500. Figure \@ref(fig:universe-fig)
+compares the Group 12 sample with the full universe; Figure \@ref(fig:sector-fig)
+shows the cumulative path of each GICS sector, illustrating why the sample's light
+Technology weighting muted its pandemic Sharpe ratios.
+
+```{r apx-a-stock-plots, fig.cap="Rebased equal-weighted values for the SP 500 from x to y!. Top: Group 12 sample versus the full X*! universe. Bottom: Full XJ*! universe grouped by GICS sector.", fig.width=6.5, fig.height=7.5}
+regimes <- data.frame(
+  Regime = c("Financial crisis", "Pandemic"),
+  xmin = c(fc_lo, pd_lo),
+  xmax = c(fc_hi, pd_hi)
+)
+
+# BE note: don't like hard coded values here
+cum_df <- data.frame(
+  Date = dates,
+  `Group 12 (100)` = cumprod(1 + rowMeans(returns100)),
+  `All DA441 (441)` = cumprod(1 + rowMeans(returns_all)),
+  check.names = FALSE
+)
+
+long_cum <- pivot_longer(
+  cum_df, -Date,
+  names_to = "Universe", values_to = "Growth"
+)
+ylims <- range(long_cum$Growth, na.rm = TRUE)
+
+p1 <- ggplot(
+  pivot_longer(cum_df, -Date, names_to = "Universe", values_to = "Growth"),
+  aes(Date, Growth, color = Universe)
+) +
+  geom_rect(
+    data = regimes,
+    inherit.aes = FALSE,
+    # manually tweaked
+    aes(
+      xmin = xmin, xmax = xmax, ymin = ylims[1], ymax = ylims[2], fill = Regime
+    ),
+    alpha = 0.08
+  ) +
+  scale_fill_manual(
+    breaks = c("Financial crisis", "Pandemic"),
+    values = c("Financial crisis" = "red", "Pandemic" = "blue")
+  ) +
+  geom_line() +
+  scale_y_log10() +
+  labs(y = "Rebased values (log $)", x = NULL) +
+  theme_minimal() +
+  theme(legend.position = "top", legend.title = element_blank()) +
+  guides(color = guide_legend(order = 1), fill = guide_legend(order = 2))
+
+sec_map <- setNames(gics[["GICS Sector Name"]], gics$DA441_column_name)
+sectors <- sec_map[colnames(returns_all)]
+stopifnot(!anyNA(sectors))
+
+sect_cum <- sapply(sort(unique(sectors)), function(s) {
+  cumprod(1 + rowMeans(returns_all[, sectors == s, drop = FALSE]))
+})
+
+sect_df <- data.frame(Date = dates, sect_cum, check.names = FALSE)
+
+p2 <- ggplot(
+  pivot_longer(sect_df, -Date, names_to = "Sector", values_to = "Growth"),
+  aes(Date, Growth, color = Sector)
+) +
+  geom_line(linewidth = 0.5) +
+  scale_y_log10() +
+  labs(y = "Rebased values (log $)", x = NULL) +
+  theme_minimal() +
+  theme(legend.position = "bottom", legend.title = element_blank()) +
+  guides(color = guide_legend(nrow = 3))
+
+p1 / p2
+```
+
+```{=latex}
+\clearpage
+\newpage
+```
+
+# Coursework 2: supplementary analyses {#apd-b}
+
+
 
 # Reproducibility, accessibility & AI declaration
 

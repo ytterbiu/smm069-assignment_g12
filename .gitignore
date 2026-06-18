@@ -3,6 +3,7 @@
 a_submission-docs/
 resources-for-gen-ai/
 .venv/
+gau*/
 
 # user settings
 .*DS_Store/*
@@ -47,3 +48,5 @@ figure-testing.R
 *.dcf
 utility_functions.R
 CHANGELOG.md
+SMM069_coursework_group12.R
+BE_notes.md

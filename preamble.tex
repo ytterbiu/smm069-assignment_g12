@@ -15,6 +15,7 @@
 
 \usepackage[english]{babel}
 % \addto\captionsenglish{% \renewcommand{\chaptername}{Lecture}% }
+\usepackage{orcidlink}
 
 \graphicspath{{fig/}{images/}}
 
@@ -69,6 +70,11 @@
 % \usepackage{listings}
 % \usepackage{inconsolata}
 % \lstset{basicstyle=\ttfamily\footnotesize,breaklines=true,columns=fullflexible,upquote=true,numbers=left,numberstyle=\tiny,frame=single}
+
+\definecolor{myttgreen}{HTML}{188038}
+\definecolor{myttred}{HTML}{C62828}
+\newcommand{\greentt}[1]{\texttt{\color{myttgreen}#1}}
+\newcommand{\redtt}[1]{\texttt{\color{myttred}#1}}
 
 % check for custom local file
 \IfFileExists{preamble-local.tex}
