@@ -1358,22 +1358,37 @@ conv_tab <- aggregate(Converged ~ Model,
 ```
 
 ```{r b2-best, include=FALSE}
-# Model selection for B2
+# Model selection for B2. The choice weighs several criteria (see prose), so
+# it is made explicitly rather than by argmin
+# the stopifnot below verifies that the stated basis for the choice 
+# (best winsorised RMSE at both caps and best deviance in the relative table)
+# holds in the data, so a stale cache or changed configuration fails the knit
+# rather than silently contradicting B2.
 best_model <- "RR"
+stopifnot(
+  rel_tab$Model[which.min(rel_tab$RMSE_Win_95)] == best_model,
+  rel_tab$Model[which.min(rel_tab$RMSE_Win_99)] == best_model,
+  rel_tab$Model[which.min(rel_tab$Dev)] == best_model
+)
 
 # Headline numbers for the chosen model for inline reference
 bm_rel <- rel_tab[rel_tab$Model == best_model, ]
 bm_raw <- raw_tab[raw_tab$Model == best_model, ]
 g2_raw <- raw_tab[raw_tab$Model == "GLM2", ]
 bm_rmse95_gain <- 100 * (1 - bm_rel$RMSE_Win_95) # % improvement vs GLM2
-bm_mae95_gain  <- 100 * (1 - bm_rel$MAE_Win_95)
+bm_mae95_gain <- 100 * (1 - bm_rel$MAE_Win_95)
 
-# Per-run win rate vs GLM2 on winsorised RMSE (95% cap): share of the 500
-# runs in which the chosen model's ratio to GLM2 is below one
+# Per-run win rate vs GLM2 on winsorised RMSE (95% cap)
 bm_w95_winrate <- 100 * mean(
   rel_runs$RMSE_Win_95[rel_runs$Model == best_model] < 1,
   na.rm = TRUE
 )
+
+# Comparison values for the B2 prose
+en_rel <- rel_tab[rel_tab$Model == "EN", ]
+en_gap_w95 <- 100 * (en_rel$RMSE_Win_95 - bm_rel$RMSE_Win_95) # EN vs RR, pp
+dsh_ae <- raw_tab$AE_Ratio[raw_tab$Model == "DSh"]
+bm_ae_shortfall <- 100 * abs(bm_raw$AE_Ratio - 1) # % miscalibration
 ```
 
 ```{r b3-insample, include=FALSE}
@@ -1439,31 +1454,31 @@ labels.
 Three groups of features were then constructed. Continuous rating factors were
 capped and log-transformed, with `VehPower` capped at 9, `BonusMalus` at 150
 and `Density` floored at 1, to bound implausible values and squash the heavy
-right tails typical of insurance covariates (sensitivity to both caps is
-examined in Appendix \@ref(apx-b-caps)). Driver and vehicle age entered
+right tails typical of insurance covariates. Driver and vehicle age entered
 through natural cubic splines with three degrees of freedom, allowing the
-non-monotone age effects familiar from motor pricing. A four-degree
-alternative is compared using the Akaike information criterion (AIC) in
-Appendix \@ref(apx-b-splines). The high-cardinality factors `Region`, `Area`
-and `VehBrand` were target-encoded with a credibility-style smoother,
+non-monotone age effects familiar from motor pricing. The high-cardinality
+factors `Region`, `Area` and `VehBrand` were target-encoded with a
+credibility-style smoother,
 $$
 \text{TE} = \lambda\,\bar y_{\text{group}} + (1-\lambda)\,\bar y_{\text{global}}
 $$
 with $\lambda = n/(n + \kappa)$ and $\kappa = 20$, computed leave-one-out on
-training rows so that a policy never contributes to its own encoding
-(Appendix \@ref(apx-b-ksmooth) varies $\kappa$). Target encoding also keeps
+training rows so that a policy never contributes to its own encoding. Target encoding also keeps
 the design matrix compact. One-hot encoding these three factors would add
 roughly thirty sparse columns to an 800-row training fold, worsening the
 conditioning of the weighted information matrix that must be inverted at
 every step of the iteratively reweighted least squares (IRLS) algorithm.
 
-All continuous features were standardised using training-fold means
-and standard deviations. Standardisation is not strictly required for any of
-the fitted models, since fitted values depend on the data only through the
-linear predictor, but it is retained for comparability with the
-released practice code (Appendix \@ref(apx-b-scaling)). Every preprocessing
-step was learned on training folds and frozen before application to test
-folds, so no information leaks from test to train. In **R** this was implemented as follows:
+All continuous features were standardised using training-fold means and
+standard deviations. Standardisation is not strictly required for any of the
+fitted models, since fitted values depend on the data only through the linear
+predictor, but it is retained for comparability with the released practice
+code. Every preprocessing step was learned on training folds and frozen
+before application to test folds, so no information leaks from test to train.
+The robustness of these choices, covering the two variable caps, the spline
+flexibility, the target-encoding smoother $\kappa$ and the standardisation
+step, is examined in Appendix \@ref(apx-b-robustness). In **R** this was
+implemented as follows:
 
 ```{r b-data-prep-show, ref.label="b-data-prep", echo=TRUE, eval=FALSE}
 ```
@@ -1615,6 +1630,29 @@ computation time. This ordering is consistent with the evidence in
 @Asimit2025GLMsolsviaShrinkage, which finds ridge regression dominant under
 the log link used here in both simulation and the freMTPL2 application.
 
+## Model comparison and selection (B2) {#b-b2}
+
+With no model showing out-of-sample ranking power (Section \@ref(b1-raw)),
+selection rests on tail-robust accuracy, deviance and calibration. On that basis
+we select Ridge Regression (RR) as the "best" overall performer. RR posts the
+best winsorised RMSE at both caps and the lowest deviance, beating `GLM2` on the
+95%-capped RMSE in
+`r fmt(bm_w95_winrate, 1)`% of the `r fmt(n_runs, 0)` runs with a
+`r fmt(bm_rmse95_gain, 1)`% average reduction. Elastic net is practically
+indistinguishable, within
+`r fmt(en_gap_w95, 1)` percentage points on the 95%-capped RMSE with marginally
+better calibration, and would be an equally defensible choice. RR's aggregate
+calibration (AE `r fmt(bm_raw$AE_Ratio, 3)`) trails DSh
+(`r fmt(dsh_ae, 3)`), but a uniform `r fmt(bm_ae_shortfall, 0)`% shortfall is
+corrected by rebasing the premium level, whereas DSh cannot recover RR's
+accuracy. That penalised L2 beats the bespoke shrinkage GLMs is itself
+informative. At n = `r fmt(n_pol, 0)`, with a correlated spline and
+target-encoded design and almost no severity signal, the optimal shrinkage is
+heavy. Ridge tunes its intensity directly against predictive loss by
+cross-validation, while the `savvyGLM` plug-in intensities shrink towards
+maximum-likelihood targets that inherit the noise, the regime in which
+@Asimit2025GLMsolsviaShrinkage likewise find ridge dominant under the log
+link. RR's computation time, under a second per fit, is immaterial.
 
 
 <!-- # Conclusions
@@ -2213,7 +2251,10 @@ fit_full_glm <- function(veh_cap = 9, bm_cap = 150, k_smooth = 20,
 ### Sensitivity to the VehPower and BonusMalus caps {#apx-b-caps}
 
 The preprocessing caps `VehPower` at 9 and `BonusMalus` at 150 before the log
-transform. Both cut-offs are varied here with all other choices held constant. The results are evaluated using the full-data Gamma GLM's AIC alongside a single 5-fold CV of winsorised RMSE (95%), normalised Gini and the AE ratio.
+transform. Both cut-offs are varied here with all other choices held constant.
+The results are evaluated using the full-data Gamma GLM's Akaike information
+criterion (AIC) alongside a single 5-fold CV of winsorised RMSE (95%),
+normalised Gini and the AE ratio.
 
 ```{r apx-b-caps-run, include=FALSE}
 veh_grid <- c(6, 9, 12, Inf)
@@ -2265,16 +2306,18 @@ kable(caps_tab[, -1],
 As shown in Table \@ref(tab:apx-b-caps-table), across all eight configurations
 the AIC spans barely a single unit
 (`r fmt(min(caps_tab$AIC), 1)` to `r fmt(max(caps_tab$AIC), 1)`),
-winsorised RMSE moves by three euros
-(`r round(min(caps_tab$RMSE_W95))`€ to `r round(max(caps_tab$RMSE_W95))`€), and the
+winsorised RMSE moves by 
+`r round(max(caps_tab$RMSE_W95) - min(caps_tab$RMSE_W95))`
+euros
+(€`r round(min(caps_tab$RMSE_W95))` to €`r round(max(caps_tab$RMSE_W95))`), and the
 AE ratio is effectively constant (`r fmt(min(caps_tab$AE), 3)` to
 `r fmt(max(caps_tab$AE), 3)`). 
 This shows that the defaults are neither
 favoured nor penalised and the model is insensitive to where these two
 variables are truncated. The `BonusMalus` cap matters less than the
-`VehPower` cap, with caps of 150, 200 and "none" resulting in identical figures. This is because no policy (in our `r fmt(n_pol, 0)` policies) carries a `BonusMalus` score above 150, so raising or removing the ceiling does not change the model. The only visible movement is a tighter `BonusMalus` cap of 100, which discards a little signal and nudges RMSE up to `r round(caps_tab$RMSE_W95[caps_tab$Cap == "100"])`
+`VehPower` cap, with caps of 150, 200 and "none" resulting in identical figures. This is because no policy (in our `r fmt(n_pol, 0)` policies) carries a `BonusMalus` score above 150, so raising or removing the ceiling does not change the model. The only visible movement comes from the tighter cap of 100, which touches the `r fmt(n_bm_gt100, 0)` policies scoring above it and nudges RMSE up to `r round(caps_tab$RMSE_W95[caps_tab$Cap == "100"])`
 (versus `r round(caps_tab$RMSE_W95[caps_tab$Cap == "150"])` at the default). Scores above 100 are the malus-loaded, higher-risk policies, so cutting at 100 compresses real differentiation among the worst drivers. The
-normalised Gini stays negative throughout, consistent with finding in \@ref(b-i). Policy-level severity carries no rankable out-of-sample signal at this sample size so its small movements across the grid are not informative.
+normalised Gini stays negative throughout, consistent with the finding in \@ref(b1-raw). Policy-level severity carries no rankable out-of-sample signal at this sample size so its small movements across the grid are not informative.
 
 ### Spline flexibility: three versus four degrees of freedom {#apx-b-splines}
 
@@ -2319,7 +2362,7 @@ cross-validation to assess true out-of-sample performance (Table
 Adding a knot to `DrivAge` (while holding `VehAge` at 3) yields no benefit. The deviance remains completely unchanged at `r fmt(sp_tab$Deviance[sp_tab$driv_df==4 & sp_tab$veh_df==3], 1)`. As a result the AIC increases strictly due to the parameter penalty (from `r fmt(sp_tab$AIC[sp_tab$driv_df==3 & sp_tab$veh_df==3], 1)` to `r fmt(sp_tab$AIC[sp_tab$driv_df==4 & sp_tab$veh_df==3], 1)`), and the winsorised RMSE worsens from `r round(sp_tab$RMSE_W95[sp_tab$driv_df==3 & sp_tab$veh_df==3])` to `r round(sp_tab$RMSE_W95[sp_tab$driv_df==4 & sp_tab$veh_df==3])`. This indicates the extra driver-age flexibility is simply fitting noise. 
 
 Adding a knot to `VehAge` in isolation does improve the model. Deviance falls to `r fmt(sp_tab$Deviance[sp_tab$driv_df==3 & sp_tab$veh_df==4], 1)`, AIC decreases by roughly nine units (to `r fmt(sp_tab$AIC[sp_tab$driv_df==3 & sp_tab$veh_df==4], 1)`), and winsorised RMSE improves to `r round(sp_tab$RMSE_W95[sp_tab$driv_df==3 & sp_tab$veh_df==4])`. 
-However this performance gain is modest (approximately a `r fmt(100 * (1 - sp_tab$RMSE_W95[sp_tab$driv_df==3 & sp_tab$veh_df==4] / sp_tab$RMSE_W95[sp_tab$driv_df==3 & sp_tab$veh_df==3]), 1)`% improvement in winsorised RMSE) and serves better as an acknowledged limitation of the current specification rather than a mandate to re-run the extensive 500-fold study. The normalised Gini coefficient also remains negative across all configurations, showing that the increased flexibility provides no additional out-of-sample ranking power.
+However this performance gain is modest (approximately a `r fmt(100 * (1 - sp_tab$RMSE_W95[sp_tab$driv_df==3 & sp_tab$veh_df==4] / sp_tab$RMSE_W95[sp_tab$driv_df==3 & sp_tab$veh_df==3]), 1)`% improvement in winsorised RMSE) and serves better as an acknowledged limitation of the current specification rather than a mandate to re-run the full 500-run cross-validation study. The normalised Gini coefficient also remains negative across all configurations, showing that the increased flexibility provides no additional out-of-sample ranking power. We therefore retain three degrees of freedom for both variables, matching the specification of the released practice code and @Asimit2025GLMsolsviaShrinkage, and note the additional `VehAge` knot as a candidate refinement for a larger study.
 
 <!-- Despite this, we retain three degrees of freedom for both variables in the main analysis. This ensures symmetry between the age effects and aligns with the baseline specification established by @Asimit2025GLMsolsviaShrinkage.  -->
 
@@ -2345,12 +2388,12 @@ global mean (risking underfitting). Because in-sample fit inherently rewards a
 smaller $\kappa$, we evaluate the comparison entirely out-of-sample.
 
 As shown in Table \@ref(tab:apx-b-ksmooth-table), out-of-sample performance
-remains constant across all values of $\kappa$ with no single value performing materially better than the default. Winsorised RMSE varies
+remains essentially flat across all values of $\kappa$ with no single value performing materially better than the default. Winsorised RMSE varies
 by only a couple of euros across the entire grid (from
 `r round(min(ks_tab$RMSE_W95))` at $\kappa = 5$ to 
 `r round(max(ks_tab$RMSE_W95))` at $\kappa = 100$), and the AE ratio is
 virtually unchanged (ranging from `r fmt(min(ks_tab$AE), 3)` to 
-`r fmt(max(ks_tab$AE), 3)`).  Interestingly a small $\kappa$ does not lead to
+`r fmt(max(ks_tab$AE), 3)`).  Interestingly, a small $\kappa$ does not lead to
 overfitting in this instance. The lowest winsorised RMSE occurs at the minimum
 tested value of $\kappa = 5$ suggesting that trusting sparse brand or region
 cells does not penalise the model at the current sample size. The only monotonic
@@ -2383,7 +2426,6 @@ its coefficient by $1/s$, leaving $\hat\mu_i$ unchanged. We note also that
 penalisation is applied on a common scale regardless of the input format.
 
 ```{r apx-b-scaling-check, echo=FALSE}
-# BE note: double check this
 m_scaled <- fit_full_glm(standardise = TRUE)
 m_raw    <- fit_full_glm(standardise = FALSE)
 # max(abs(fitted(m_scaled) - fitted(m_raw))) 
@@ -2433,9 +2475,9 @@ savvyGLM / glm.fit2: step size truncated / cannot correct step size
     for SR to 
     `r fmt(mean(final_results$NoIt[final_results$Model == "GLM2"], na.rm = TRUE), 1)` for GLM2, and every fit in this family (GLM2 and the six
     savvyGLM estimators) settles in all `r fmt(n_runs, 0)` runs. The glmnet
-    models (RR and EN) do not report a comparable per-fit flag, and their counts
-    measure a different kind of step, so they are left blank in the table and
-    not compared with the rest.
+    models (RR and EN) do not expose a comparable per-fit flag, shown as a dash
+    in the table, and their iteration counts measure coordinate-descent passes,
+    so neither column is compared with the IRLS family.
 
 
 ```{r apx-b-conv-table}
@@ -2480,11 +2522,9 @@ and deployed to shinyapps.io. The application is available via:
 
 - TBC
 
-```{r appendix-dashboard-1, eval=FALSE, echo=FALSE, purl=FALSE, out.width="90%", fig.cap="The R Shiny dashboard interface. A selection of US equities is downloaded globally on application start-up to avoid repeated API requests and rate-limiting restrictions. The sidebar allows users to specify the historical date window for volatility estimation, and to adjust the number of time steps ($N$), maturity, the risk-free rate ($r$), and the strike multiplier as a proportion of $S_0$."}
+```{r appendix-dashboard-1, eval=FALSE, echo=FALSE, purl=FALSE, out.width="90%", fig.cap="TBI."}
 knitr::include_graphics("fig/appendix-dashboard-1.png")
 ```
-
-# Reproducibility, accessibility & AI declaration
 
 <!-- BE note: taken out as we are submitting R file separately -->
 <!-- Use: `knitr::purl("cs1-group07.rmd", documentation = 0)` to generate r file -->
@@ -2496,18 +2536,17 @@ knitr::include_graphics("fig/appendix-dashboard-1.png")
 
 An accessible HTML version of this report is available via a public GitHub page:
 
-- !Link TBI
+- https://github.com/ytterbiu/smm069-assignment_g12
 
 This report was created in R Markdown. The source code is open source and is
 available via:
 
-- !Link TBI
+- https://ytterbiu.github.io/smm069-assignment_g12/
 
 Changes made to this document were tracked using Git and are also available via
-the same repository (!link TBI). Please note that this commit history reflects
+the same repository (https://github.com/ytterbiu/smm069-assignment_g12/commits/main/). Please note that this commit history reflects
 updates made to the project repository and is not a comprehensive timeline of
 all contributions by group members.
-
 
 # Generative AI declaration {#apd:genai}
 
