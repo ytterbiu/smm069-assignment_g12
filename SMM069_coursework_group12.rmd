@@ -166,6 +166,7 @@ group_num <- 12 # seed 12 for group 12 ( ˶ˆᗜˆ˵ )
 set.seed(group_num)
 ## disable scientific notation ----
 options(scipen = 999) 
+options(knitr.kable.NA = "---") # all NA -> dashes 
 ```
 
 ```{r custom-functions, include=FALSE, echo=FALSE}
@@ -272,7 +273,7 @@ fmt <- function(x, d = 2) {
 
 # Coursework 1 {-}
 
-# Shrinkage estimation for portfolio construction
+# Shrinkage estimation for portfolio construction {#coursework1}
 
 ```{r a-data-load, include=FALSE}
 no_companies <- 100
@@ -971,7 +972,7 @@ ggplot(sector_tab, aes(x = Count, y = reorder(Sector, Count))) +
 
 # Coursework 2 {-}
 
-# Shrinkage Generalised Linear Models for Insurance Claim Severity Estimation
+# Shrinkage Generalised Linear Models for Insurance Claim Severity Estimation {#coursework2}
 
 ```{=latex}
 % Custom shortened header to avoid overlap
@@ -1008,22 +1009,19 @@ model_names <- c("GLM2", "RR", "EN", "QIS", "LW", "SR", "GSR", "St", "DSh")
 ```
 
 ```{r b-data-prep, include=FALSE}
-# BE note: changed to relative paths, just put all data in data folder
+# Read in data (stored in relative data/ folder)
 freq <- read.csv("data/freMTPL2freq.csv")
 sev <- read.csv("data/freMTPL2sev.csv")
-
 # Aggregate severity by policy ID (& merge with frequency features)
 sev_agg <- aggregate(ClaimAmount ~ IDpol, data = sev, FUN = sum)
 data <- merge(freq, sev_agg, by = "IDpol")
-
 # Filter for exactly 1 claim and positive claim amount
 data_sev <- data[data$ClaimNb == 1 & data$ClaimAmount > 0, ]
 
 # Group seed set before the single random draw of 1,000 rows just to be safe
 # (avoiding part A rng leakage)
-
 set.seed(group_num)
-# Randomly sample exactly 1000 rows
+# Randomly sample 1000 rows
 data_sev <- data_sev[sample(nrow(data_sev), 1000), ]
 # for generality (= ClaimAmount)
 data_sev$Severity <- data_sev$ClaimAmount / data_sev$ClaimNb
@@ -1036,8 +1034,7 @@ data_sev$Severity <- data_sev$ClaimAmount / data_sev$ClaimNb
 data_sev$VehPower_Log <- log(pmax(pmin(data_sev$VehPower, 9), 1))
 data_sev$Density_Log <- log(pmax(data_sev$Density, 1))
 data_sev$BonusMalus_Log <- log(pmin(data_sev$BonusMalus, 150))
-
-# BE note: quick check -> should be 1000
+# Quick check -> should be 1000
 n_pol <- nrow(data_sev)
 ```
 
@@ -1073,13 +1070,12 @@ NormalisedWeightedGini <- function(actual, weights, predicted) {
 
 ```{r b-feature-engine, include=FALSE}
 # Leakage-safe feature construction ====
-# Used for appendix?*!
+# Used for appendix
 # function encapsulating the pipeline used inside every CV fold
 #   splines fitted on training rows only
 #   smoothed leave-one-out target encoding learned on training rows only
 #   standardisation frozen at training means/sds.
 # With test = NULL it prepares the full dataset for the in-sample analysis (B3) and for the appendix sensitivity checks, using the same construction.
-
 build_features <- function(train, test = NULL,
                            veh_cap = 9, bm_cap = 150,
                            driv_df = 3, veh_df = 3,
@@ -1330,6 +1326,14 @@ rel_tab <- aggregate(rel_runs[, metric_cols],
 )
 rel_tab <- rel_tab[match(model_names, rel_tab$Model), ]
 
+# Display copy for the kable. The per-run GLM2 Gini is small and frequently
+# negative, so Gini ratios flip sign and explode
+# Both Gini columns (and AE, a ratio of ratios) are judged from the raw table
+# rel_tab itself is kept numeric for inline references
+ratio_excluded <- c("Gini_Raw", "Gini_Norm", "AE_Ratio")
+rel_tab_disp <- rel_tab
+rel_tab_disp[ratio_excluded] <- NA_real_
+
 # Direction of "better", per the brief, used for highlighting
 metric_dir <- c(
   RMSE = "min", MAE = "min", RMSE_Win_99 = "min",
@@ -1355,15 +1359,21 @@ conv_tab <- aggregate(Converged ~ Model,
 
 ```{r b2-best, include=FALSE}
 # Model selection for B2
-#   executive summary, B2 prose and the B3 in-sample fit read from this
 best_model <- "RR"
 
-# Headline numbers for the chosen model, for inline reference
+# Headline numbers for the chosen model for inline reference
 bm_rel <- rel_tab[rel_tab$Model == best_model, ]
 bm_raw <- raw_tab[raw_tab$Model == best_model, ]
 g2_raw <- raw_tab[raw_tab$Model == "GLM2", ]
 bm_rmse95_gain <- 100 * (1 - bm_rel$RMSE_Win_95) # % improvement vs GLM2
-bm_mae95_gain <- 100 * (1 - bm_rel$MAE_Win_95)
+bm_mae95_gain  <- 100 * (1 - bm_rel$MAE_Win_95)
+
+# Per-run win rate vs GLM2 on winsorised RMSE (95% cap): share of the 500
+# runs in which the chosen model's ratio to GLM2 is below one
+bm_w95_winrate <- 100 * mean(
+  rel_runs$RMSE_Win_95[rel_runs$Model == best_model] < 1,
+  na.rm = TRUE
+)
 ```
 
 ```{r b3-insample, include=FALSE}
@@ -1376,6 +1386,8 @@ X_full <- model.matrix(glm_formula, full_data)
 y_full <- full_data$Severity
 w_full <- full_data$ClaimNb
 
+# BE note: cv.glmnet randomises its internal folds so setting internal seed
+# again here 
 set.seed(group_num)
 coefs_full <- fit_model_coefs(best_model, X_full, y_full, w_full)
 coefs_full[is.na(coefs_full)] <- 0
@@ -1407,6 +1419,202 @@ decile_tab <- data.frame(y = y_full, mu = mu_full) |>
 ```
 
 ---
+
+<!-- ## Executive summary {-} -->
+
+<!-- TBI (going to do last) if required.  Thinking of this as being 1-2 paragraphs max. A bit like a scientific abstract to set the stage. -->
+
+## Out-of-sample performance evaluation {#b-i}
+
+### Data and preprocessing {#b-prep}
+
+The French Motor Third-Party Liability (freMTPL2) frequency and severity
+datasets were merged on policy ID after aggregating claim amounts per policy.
+Policies with exactly one claim and a positive claim amount were retained, and a
+random sample of `r fmt(n_pol, 0)` policies was drawn under our Group 
+`r group_num` seed. This sample was fixed for all subsequent analysis, with the
+cross-validation seeds inside the evaluation loop reshuffling only the fold
+labels.
+
+Three groups of features were then constructed. Continuous rating factors were
+capped and log-transformed, with `VehPower` capped at 9, `BonusMalus` at 150
+and `Density` floored at 1, to bound implausible values and squash the heavy
+right tails typical of insurance covariates (sensitivity to both caps is
+examined in Appendix \@ref(apx-b-caps)). Driver and vehicle age entered
+through natural cubic splines with three degrees of freedom, allowing the
+non-monotone age effects familiar from motor pricing. A four-degree
+alternative is compared using the Akaike information criterion (AIC) in
+Appendix \@ref(apx-b-splines). The high-cardinality factors `Region`, `Area`
+and `VehBrand` were target-encoded with a credibility-style smoother,
+$$
+\text{TE} = \lambda\,\bar y_{\text{group}} + (1-\lambda)\,\bar y_{\text{global}}
+$$
+with $\lambda = n/(n + \kappa)$ and $\kappa = 20$, computed leave-one-out on
+training rows so that a policy never contributes to its own encoding
+(Appendix \@ref(apx-b-ksmooth) varies $\kappa$). Target encoding also keeps
+the design matrix compact. One-hot encoding these three factors would add
+roughly thirty sparse columns to an 800-row training fold, worsening the
+conditioning of the weighted information matrix that must be inverted at
+every step of the iteratively reweighted least squares (IRLS) algorithm.
+
+All continuous features were standardised using training-fold means
+and standard deviations. Standardisation is not strictly required for any of
+the fitted models, since fitted values depend on the data only through the
+linear predictor, but it is retained for comparability with the
+released practice code (Appendix \@ref(apx-b-scaling)). Every preprocessing
+step was learned on training folds and frozen before application to test
+folds, so no information leaks from test to train. In **R** this was implemented as follows:
+
+```{r b-data-prep-show, ref.label="b-data-prep", echo=TRUE, eval=FALSE}
+```
+
+### Models and out-of-sample evaluation design {#b-design}
+
+Nine models were fitted with a Gamma response and log link such that
+$$
+\hat y_i = \hat\mu_i = \exp(x_i^\top\hat\beta)
+$$
+The IRLS fit `GLM2` serves as the baseline. Ridge regression (RR) and elastic net (EN)
+were fitted via `cv.glmnet`, with the penalty chosen by internal
+cross-validation (`lambda.min`). The remaining six models are the shrinkage
+GLMs of @Asimit2025GLMsolsviaShrinkage implemented in the `savvyGLM` package
+(`St`, `DSh`, `SR`, `GSR`, `LW` and `QIS`). These estimators shrink the maximum-likelihood estimates towards structured targets in the spirit of the
+mean and covariance shrinkage used in Coursework 1. Mechanically, these
+estimators retain the IRLS structure of `glm.fit2` but replace the weighted
+least squares (WLS) step at each iteration with a shrunk solution. `St` and
+`DSh` rescale the WLS coefficients by scalars chosen to minimise mean squared
+error, `SR` and `GSR` impose slab penalties along eigenvector directions, and
+`LW` and `QIS` shrink the weighted information matrix before inversion. All
+shrinkage intensities are available in closed form, so unlike RR and EN
+no cross-validation is required. RR and EN are fitted by
+coordinate descent, which is why their computation time (CT) and iteration
+count (NoIt) are not directly comparable with those of the IRLS family.
+
+Performance in each run is scored by the metrics specified in the brief. The
+root mean squared error (RMSE) and mean absolute error (MAE) measure raw
+prediction error, with winsorised variants capping actual and predicted
+values at the 99th and 95th training-response percentiles (W99, W95) to limit
+distortion from extreme claims. The Gamma deviance (Dev) measures
+goodness-of-fit under the assumed distribution, the raw and normalised Gini
+indices measure risk-ranking ability, and the actual-to-expected (AE) ratio
+measures aggregate calibration, with a value of one indicating that total
+predicted severity matches total observed severity.
+
+Out-of-sample performance is estimated by 5-fold cross-validation replicated
+100 times, giving `r fmt(n_runs, 0)` evaluation runs. In each replication the
+`r fmt(n_pol, 0)` policies are partitioned into five folds, with 80% of
+observations training the models and 20% testing them, and each fold serves
+as the test set exactly once. Winsorisation caps for the robust error metrics are computed from the training response in each run. The evaluation loop is reproduced below, with results cached to an rds file and reloaded at knit time
+under the final configuration (one-claim filter, group seed 
+`r group_num`, $n = `r fmt(n_pol, 0)`$).
+
+```{r b1-loop-show, ref.label="b1-loop", echo=TRUE, eval=FALSE}
+```
+
+Convergence warnings emitted by `glmnet` and by the `savvyGLM` step-halving
+safeguard during the loop are expected behaviour of those fitters rather than
+evidence of failure, and are discussed further in Appendix
+\@ref(apx-b-convergence).
+
+### Raw performance {#b1-raw}
+
+Table \@ref(tab:b1-raw-table) reports each metric averaged over all
+`r fmt(n_runs, 0)` runs. Because severity is heavy-tailed, the unwinsorised
+RMSE is dominated by a handful of very large claims and separates the models
+poorly, so the winsorised variants are the more informative measures of
+accuracy. A second feature of the table shapes the whole comparison. Every
+normalised Gini is negative, baseline included (the least negative is EN at
+`r fmt(raw_tab$Gini_Norm[raw_tab$Model == "EN"], 3)`), whereas a model with
+genuine ranking power has a normalised Gini in $(0, 1]$. At
+$n = `r fmt(n_pol, 0)`$, policy-level claim severity therefore carries
+essentially no rankable out-of-sample signal. This is an expected property of
+individual severity, where most variation is claim-level randomness, rather
+than a defect of any particular estimator. The Gini columns are retained for
+completeness, and the comparison between models rests on the winsorised
+errors, the Gamma deviance and the AE calibration ratio.
+
+```{r b1-raw-table}
+kb <- kable(raw_tab,
+  row.names = FALSE, booktabs = TRUE,
+  digits = c(NA, 0, 0, 0, 0, 0, 0, 1, 4, 4, 3, 3, 1),
+  caption = "Raw out-of-sample performance: mean of each metric over all 500 evaluation runs. The best value per column is shown in green (lower is better for the error, deviance, time and iteration metrics, higher for the Gini indices, and closest to one for the AE ratio). NoIt counts IRLS iterations for GLM2 and savvyGLM but coordinate-descent passes for glmnet, so it is not comparable across those two families.",
+  col.names = c(
+    "Model", "RMSE", "MAE", "RMSE W99", "RMSE W95", "MAE W99",
+    "MAE W95", "Dev.", "Gini raw", "Gini norm", "AE", "CT (s)",
+    "NoIt"
+  )
+) |>
+  kable_styling(
+    full_width = FALSE, position = "center", font_size = 8,
+    latex_options = c("scale_down", "hold_position")
+  ) |>
+  pack_rows("Baseline", 1, 1) |>
+  pack_rows("Penalised (glmnet)", 2, 3) |>
+  pack_rows("Shrinkage GLMs (savvyGLM)", 4, 9)
+for (j in seq_along(metric_cols)) {
+  b <- best_flag(raw_tab[[metric_cols[j]]], metric_dir[metric_cols[j]])
+  kb <- column_spec(kb, j + 1, bold = b, color = ifelse(b, "#1b9e77", "black"))
+}
+kb
+```
+
+```{r b1-rel-table}
+kb <- kable(rel_tab_disp,
+  row.names = FALSE, booktabs = TRUE, digits = 3,
+  caption = "Relative out-of-sample performance: mean of per-run ratios versus GLM2 (GLM2 = 1 by construction). Values below one are better for the error, deviance, time and iteration metrics. The AE ratio is itself a ratio and the per-run GLM2 Gini is near zero and sign-varying, so ratios of these three columns are not meaningful. As they are judged from the raw table their cells are omitted here.",
+  col.names = c(
+    "Model", "RMSE", "MAE", "RMSE W99", "RMSE W95", "MAE W99",
+    "MAE W95", "Dev.", "Gini raw", "Gini norm", "AE", "CT (s)", "NoIt"
+  )
+) |>
+  kable_styling(
+    full_width = FALSE, position = "center", font_size = 8,
+    latex_options = c("scale_down", "hold_position")
+  ) |>
+  pack_rows("Baseline", 1, 1) |>
+  pack_rows("Penalised (glmnet)", 2, 3) |>
+  pack_rows("Shrinkage GLMs (savvyGLM)", 4, 9)
+for (j in seq_along(metric_cols)) {
+  if (metric_cols[j] %in% ratio_excluded) next
+  b <- best_flag(rel_tab_disp[[metric_cols[j]]], metric_dir[metric_cols[j]])
+  b[rel_tab_disp$Model == "GLM2"] <- FALSE
+  kb <- column_spec(kb, j + 1, bold = b, color = ifelse(b, "#1b9e77", "black"))
+}
+kb
+```
+
+
+### Relative performance {#b1-rel}
+
+Table \@ref(tab:b1-rel-table) shows the average of the
+per-run ratios against the `GLM2` value in the same run for each metric, given by Eq. \@ref(eq:relative-performance).
+\begin{equation}
+\frac{1}{500}\sum_{j=1}^{500}
+\frac{\text{Metric for Model}^{(j)}}{\text{Metric for GLM2}^{(j)}}
+(\#eq:relative-performance)
+\end{equation}
+Because each ratio conditions on the same train/test split, fold-to-fold
+noise cancels and the table isolates the systematic effect of the estimator.
+Three columns are excluded from ratio form. The AE ratio is already a ratio,
+so a further ratio has no calibration interpretation. The same exclusion
+applies with greater force to the two Gini indices, whose per-run `GLM2`
+denominator is small and frequently negative, so the resulting ratios flip
+sign and explode. The mechanism is the same division by a near-zero quantity
+that inflated the tangency leverage in Coursework 1 (Appendix
+\@ref(apx-pathology)), with one important difference. In Coursework 1 the denominator was part of the portfolio construction, so the explosion was a genuine economic property of the strategy. Here it is an artefact of the
+reporting convention and carries no information about the models. All three
+metrics are therefore judged from the raw table (Table
+\@ref(tab:b1-raw-table)) and their ratio cells are omitted.
+
+Where the ratios are interpretable, a consistent ordering emerges. RR
+delivers the largest systematic reductions in the winsorised RMSEs
+(`r fmt(100 * (1 - rel_tab$RMSE_Win_95[rel_tab$Model == "RR"]), 1)`%
+at the 95% cap) and in deviance, with EN a near-tie, while the `savvyGLM`
+estimators cluster around parity with `GLM2` at a fraction of `glmnet`'s
+computation time. This ordering is consistent with the evidence in
+@Asimit2025GLMsolsviaShrinkage, which finds ridge regression dominant under
+the log link used here in both simulation and the freMTPL2 application.
+
 
 
 <!-- # Conclusions
@@ -1687,7 +1895,6 @@ cross-strategy comparisons are unaffected.
 #   add_header_above(c(" " = 1, "Performance" = 4, "Implementability" = 4)) |>
 #   column_spec(3, bold = best_sr, color = ifelse(best_sr, "#1b9e77", "black")) |>
 #   column_spec(4, bold = best_ce, color = ifelse(best_ce, "#1b9e77", "black"))
-options(knitr.kable.NA = "---")
 
 tf <- data.frame(
   Strategy = sub("^(MV|TP)_", "", rownames(tab_full)),
@@ -1950,7 +2157,321 @@ kable(stocks_tbl[, c("Ticker", "Company")],
 \newpage
 ```
 
-# Coursework 2: supplementary analyses {#apd-b}
+# Coursework 2: Supplementary analyses {#apd-b}
+
+## Robustness checks {#apx-b-robustness}
+
+```{r apx-b-helpers, include=FALSE}
+# Lightweight OOS check used by the sensitivity analyses: a single 5-fold CV
+# of the plain Gamma GLM (glm2) under a given preprocessing configuration.
+# Fixed seed so all configurations face identical fold partitions.
+quick_cv_glm <- function(veh_cap = 9, bm_cap = 150, k_smooth = 20,
+                         driv_df = 3, veh_df = 3, seed = 1) {
+  # Formula must match the spline df of the configuration
+  sp_terms <- c(paste0("DrivAge_Sp", seq_len(driv_df)),
+                paste0("VehAge_Sp",  seq_len(veh_df)))
+  fml <- reformulate(c("BonusMalus_Log", "VehPower_Log", "Density_Log",
+                       sp_terms, "VehGas", "TE_Region", "TE_Area",
+                       "TE_VehBrand"), response = "Severity")
+  set.seed(seed)
+  folds <- sample(rep(1:5, length.out = nrow(data_sev)))
+  out <- sapply(1:5, function(f) {
+    fe <- build_features(data_sev[folds != f, ], data_sev[folds == f, ],
+                         veh_cap = veh_cap, bm_cap = bm_cap,
+                         driv_df = driv_df, veh_df = veh_df,
+                         k_smooth = k_smooth)
+    Xtr <- model.matrix(fml, fe$train); Xte <- model.matrix(fml, fe$test)
+    m <- glm.fit2(x = Xtr, y = fe$train$Severity, weights = fe$train$ClaimNb,
+                  family = family_type, control = control_list)
+    cf <- m$coefficients; cf[is.na(cf)] <- 0
+    mu <- exp(as.numeric(Xte %*% cf))
+    cap95 <- quantile(fe$train$Severity, 0.95)
+    c(RMSE_W95 = calc_rmse_win(fe$test$Severity, mu, cap95),
+      Gini = NormalisedWeightedGini(fe$test$Severity, fe$test$ClaimNb, mu),
+      AE = sum(fe$test$Severity) / sum(mu))
+  })
+  rowMeans(out)
+}
+
+# Full-data Gamma GLM fit for AIC comparisons (glm2 wrapper returns a glm
+# object, so AIC() is available; glm.fit2 alone does not report AIC).
+fit_full_glm <- function(veh_cap = 9, bm_cap = 150, k_smooth = 20,
+                         driv_df = 3, veh_df = 3, standardise = TRUE) {
+  sp_terms <- c(paste0("DrivAge_Sp", seq_len(driv_df)),
+                paste0("VehAge_Sp",  seq_len(veh_df)))
+  fml <- reformulate(c("BonusMalus_Log", "VehPower_Log", "Density_Log",
+                       sp_terms, "VehGas", "TE_Region", "TE_Area",
+                       "TE_VehBrand"), response = "Severity")
+  fe <- build_features(data_sev, NULL, veh_cap = veh_cap, bm_cap = bm_cap,
+                       driv_df = driv_df, veh_df = veh_df,
+                       k_smooth = k_smooth, standardise = standardise)
+  glm2::glm2(fml, data = fe$train, family = family_type, weights = ClaimNb,
+             control = glm.control(maxit = 250, epsilon = 1e-6))
+}
+```
+
+### Sensitivity to the VehPower and BonusMalus caps {#apx-b-caps}
+
+The preprocessing caps `VehPower` at 9 and `BonusMalus` at 150 before the log
+transform. Both cut-offs are varied here with all other choices held constant. The results are evaluated using the full-data Gamma GLM's AIC alongside a single 5-fold CV of winsorised RMSE (95%), normalised Gini and the AE ratio.
+
+```{r apx-b-caps-run, include=FALSE}
+veh_grid <- c(6, 9, 12, Inf)
+bm_grid <- c(100, 150, 200, Inf)
+caps_veh <- t(sapply(veh_grid, function(vc) {
+  c(AIC = AIC(fit_full_glm(veh_cap = vc)), quick_cv_glm(veh_cap = vc))
+}))
+caps_bm <- t(sapply(bm_grid, function(bc) {
+  c(AIC = AIC(fit_full_glm(bm_cap = bc)), quick_cv_glm(bm_cap = bc))
+}))
+caps_tab <- data.frame(
+  Parameter = c(
+    rep("VehPower cap", length(veh_grid)),
+    rep("BonusMalus cap", length(bm_grid))
+  ),
+  Cap = c(
+    ifelse(is.finite(veh_grid), veh_grid, "none"),
+    ifelse(is.finite(bm_grid), bm_grid, "none")
+  ),
+  rbind(caps_veh, caps_bm), check.names = FALSE
+)
+
+# policies the 150 and 100 caps touch
+n_bm_gt150 <- sum(data_sev$BonusMalus > 150)   
+n_bm_gt100 <- sum(data_sev$BonusMalus > 100)  
+```
+
+```{r apx-b-caps-table}
+kable(caps_tab[, -1],
+  row.names = FALSE, booktabs = TRUE,
+  digits = c(NA, 1, 0, 3, 3),
+  col.names = c(
+    "Cap", "AIC (full fit)", "RMSE W95 (CV)",
+    "Gini norm (CV)", "AE (CV)"
+  ),
+  caption = "The effect of VehPower and BonusMalus cut-offs on the Gamma GLM (the values used were 9 and 150 respectively). AIC from the full-data fit; the remaining columns from a single 5-fold CV on a common fold partition."
+) |>
+  kable_styling(
+    full_width = FALSE, position = "center",
+    latex_options = "hold_position"
+  ) |>
+  pack_rows("VehPower cap (BonusMalus = 150)", 1, length(veh_grid)) |>
+  pack_rows(
+    "BonusMalus cap (VehPower = 9)", length(veh_grid) + 1,
+    length(veh_grid) + length(bm_grid)
+  )
+```
+
+As shown in Table \@ref(tab:apx-b-caps-table), across all eight configurations
+the AIC spans barely a single unit
+(`r fmt(min(caps_tab$AIC), 1)` to `r fmt(max(caps_tab$AIC), 1)`),
+winsorised RMSE moves by three euros
+(`r round(min(caps_tab$RMSE_W95))`€ to `r round(max(caps_tab$RMSE_W95))`€), and the
+AE ratio is effectively constant (`r fmt(min(caps_tab$AE), 3)` to
+`r fmt(max(caps_tab$AE), 3)`). 
+This shows that the defaults are neither
+favoured nor penalised and the model is insensitive to where these two
+variables are truncated. The `BonusMalus` cap matters less than the
+`VehPower` cap, with caps of 150, 200 and "none" resulting in identical figures. This is because no policy (in our `r fmt(n_pol, 0)` policies) carries a `BonusMalus` score above 150, so raising or removing the ceiling does not change the model. The only visible movement is a tighter `BonusMalus` cap of 100, which discards a little signal and nudges RMSE up to `r round(caps_tab$RMSE_W95[caps_tab$Cap == "100"])`
+(versus `r round(caps_tab$RMSE_W95[caps_tab$Cap == "150"])` at the default). Scores above 100 are the malus-loaded, higher-risk policies, so cutting at 100 compresses real differentiation among the worst drivers. The
+normalised Gini stays negative throughout, consistent with finding in \@ref(b-i). Policy-level severity carries no rankable out-of-sample signal at this sample size so its small movements across the grid are not informative.
+
+### Spline flexibility: three versus four degrees of freedom {#apx-b-splines}
+
+
+```{r apx-b-splines-run, include=FALSE}
+sp_grid <- expand.grid(driv_df = c(3, 4), veh_df = c(3, 4))
+sp_tab <- cbind(sp_grid, t(apply(sp_grid, 1, function(g) {
+  m <- fit_full_glm(driv_df = g["driv_df"], veh_df = g["veh_df"])
+  c(
+    AIC = AIC(m), Deviance = deviance(m), p = length(coef(m)),
+    quick_cv_glm(driv_df = g["driv_df"], veh_df = g["veh_df"])
+  )
+})))
+```
+
+```{r apx-b-splines-table}
+kable(sp_tab,
+  row.names = FALSE, booktabs = TRUE,
+  align = "c",
+  digits = c(0, 0, 1, 1, 0, 0, 3, 3),
+  col.names = c(
+    "DrivAge", "VehAge", "AIC", "Deviance", "Params",
+    "RMSE W95 (CV)", "Gini norm (CV)", "AE (CV)"
+  ),
+  caption = "Comparison of spline flexibilities for driver and vehicle age, evaluated via full-data AIC, deviance, and 5-fold cross-validation metrics."
+) |>
+  kable_styling(
+    full_width = FALSE, position = "center",
+    latex_options = "hold_position"
+  ) |>
+  add_header_above(c("Degrees of freedom" = 2, " " = 6))
+```
+
+
+Increasing the natural-spline degrees of freedom for `DrivAge` and `VehAge` from
+3 to 4 adds one internal knot, and one parameter, per variable. As deviance
+alone fails to account for overfitting, we opted to primarily evaluate these
+models using AIC to penalise the additional parameters, paired with 5-fold
+cross-validation to assess true out-of-sample performance (Table 
+\@ref(tab:apx-b-splines-table)).
+
+Adding a knot to `DrivAge` (while holding `VehAge` at 3) yields no benefit. The deviance remains completely unchanged at `r fmt(sp_tab$Deviance[sp_tab$driv_df==4 & sp_tab$veh_df==3], 1)`. As a result the AIC increases strictly due to the parameter penalty (from `r fmt(sp_tab$AIC[sp_tab$driv_df==3 & sp_tab$veh_df==3], 1)` to `r fmt(sp_tab$AIC[sp_tab$driv_df==4 & sp_tab$veh_df==3], 1)`), and the winsorised RMSE worsens from `r round(sp_tab$RMSE_W95[sp_tab$driv_df==3 & sp_tab$veh_df==3])` to `r round(sp_tab$RMSE_W95[sp_tab$driv_df==4 & sp_tab$veh_df==3])`. This indicates the extra driver-age flexibility is simply fitting noise. 
+
+Adding a knot to `VehAge` in isolation does improve the model. Deviance falls to `r fmt(sp_tab$Deviance[sp_tab$driv_df==3 & sp_tab$veh_df==4], 1)`, AIC decreases by roughly nine units (to `r fmt(sp_tab$AIC[sp_tab$driv_df==3 & sp_tab$veh_df==4], 1)`), and winsorised RMSE improves to `r round(sp_tab$RMSE_W95[sp_tab$driv_df==3 & sp_tab$veh_df==4])`. 
+However this performance gain is modest (approximately a `r fmt(100 * (1 - sp_tab$RMSE_W95[sp_tab$driv_df==3 & sp_tab$veh_df==4] / sp_tab$RMSE_W95[sp_tab$driv_df==3 & sp_tab$veh_df==3]), 1)`% improvement in winsorised RMSE) and serves better as an acknowledged limitation of the current specification rather than a mandate to re-run the extensive 500-fold study. The normalised Gini coefficient also remains negative across all configurations, showing that the increased flexibility provides no additional out-of-sample ranking power.
+
+<!-- Despite this, we retain three degrees of freedom for both variables in the main analysis. This ensures symmetry between the age effects and aligns with the baseline specification established by @Asimit2025GLMsolsviaShrinkage.  -->
+
+### Sensitivity to the target-encoding smoother $\kappa$ {#apx-b-ksmooth}
+
+```{r apx-b-ksmooth-run, include=FALSE}
+k_grid <- c(5, 10, 20, 50, 100)
+ks_tab <- data.frame(
+  kappa = k_grid,
+  t(sapply(k_grid, function(k) quick_cv_glm(k_smooth = k))),
+  check.names = FALSE
+)
+```
+
+The credibility weight in the target encoding is defined as 
+$$
+\lambda = \frac{n_{\text{group}}}{n_{\text{group}} + \kappa}
+$$
+with a default parameter of
+$\kappa = 20$. A smaller $\kappa$ places more trust in sparse group means
+(risking overfitting), whereas a larger $\kappa$ shrinks every group toward the
+global mean (risking underfitting). Because in-sample fit inherently rewards a
+smaller $\kappa$, we evaluate the comparison entirely out-of-sample.
+
+As shown in Table \@ref(tab:apx-b-ksmooth-table), out-of-sample performance
+remains constant across all values of $\kappa$ with no single value performing materially better than the default. Winsorised RMSE varies
+by only a couple of euros across the entire grid (from
+`r round(min(ks_tab$RMSE_W95))` at $\kappa = 5$ to 
+`r round(max(ks_tab$RMSE_W95))` at $\kappa = 100$), and the AE ratio is
+virtually unchanged (ranging from `r fmt(min(ks_tab$AE), 3)` to 
+`r fmt(max(ks_tab$AE), 3)`).  Interestingly a small $\kappa$ does not lead to
+overfitting in this instance. The lowest winsorised RMSE occurs at the minimum
+tested value of $\kappa = 5$ suggesting that trusting sparse brand or region
+cells does not penalise the model at the current sample size. The only monotonic
+trend appears in the normalised Gini coefficient, which becomes steadily less
+negative as $\kappa$ increases (from `r fmt(ks_tab$Gini[ks_tab$kappa==5], 3)` to
+`r fmt(ks_tab$Gini[ks_tab$kappa==100], 3)`). However, since every recorded value
+remains negative, this trend merely reflects the encoding being pulled more
+aggressively toward the global mean, rather than representing a genuine
+improvement in ranking power. 
+
+```{r apx-b-ksmooth-table}
+kable(ks_tab,
+  row.names = FALSE, booktabs = TRUE, digits = c(0, 0, 3, 3),
+  col.names = c("$\\kappa$", "RMSE W95 (CV)", "Gini norm (CV)", "AE (CV)"),
+  escape = FALSE,
+  caption = "Evaluating the Gamma GLM's sensitivity to the target-encoding smoothing parameter $\\kappa$. Performance is measured via a single 5-fold cross-validation on a shared partition, with 20 serving as the default value."
+) |>
+  kable_styling(
+    full_width = FALSE, position = "center",
+    latex_options = "hold_position"
+  )
+```
+
+### Standardisation {#apx-b-scaling}
+
+For `glm2`, `savvyGLM` and `glmnet` the fitted values depend on the data only
+through the linear predictor $x_i^\top\beta$. Scaling a column by $s$ rescales
+its coefficient by $1/s$, leaving $\hat\mu_i$ unchanged. We note also that
+`glmnet` applies standardisation internally by default, ensuring that
+penalisation is applied on a common scale regardless of the input format.
+
+```{r apx-b-scaling-check, echo=FALSE}
+# BE note: double check this
+m_scaled <- fit_full_glm(standardise = TRUE)
+m_raw    <- fit_full_glm(standardise = FALSE)
+# max(abs(fitted(m_scaled) - fitted(m_raw))) 
+```
+
+To investigate this empirically, the full-data Gamma GLM was fitted with and
+without standardisation. The maximum absolute difference across all 
+`r fmt(n_pol, 0)` fitted severities is approximately 
+`r formatC(max(abs(fitted(m_scaled) - fitted(m_raw))), format = "e", digits = 1)`
+(a negligible discrepancy attributable to floating-point rounding error). This
+confirms that standardisation in this context serves as a presentational
+convenience, retained to mirror the released practice code, rather than a
+substantive modelling choice that affects the results.
+
+## Convergence and computational notes {#apx-b-convergence}
+
+As an observational note, we encountered two types of warnings during the 
+`r fmt(n_runs, 0)`-run loop. Both originate from designed safeguards within the
+fitting algorithms rather than from data anomalies or implementation errors.
+Neither invalidates the reported results, but they are of technical interest and
+are described briefly below for completeness, alongside our interpretation.
+
+glmnet: algorithm did not converge
+:   This appears when `glmnet` is asked to fit a Gamma model with a log link.
+    For each candidate penalty strength, `glmnet` runs a small iterative fitting
+    routine that is allowed up to 25 passes by default. With heavy-tailed
+    severity data, the fits at the very lightly penalised end of the range
+    occasionally need more than 25 passes, so they stop early and report it.
+    This does not affect the final model. The penalty is chosen by
+    cross-validation, and a fit that has not settled scores poorly and is passed
+    over. We checked that the penalty finally selected never comes from that
+    unsettled end of the range. 
+
+savvyGLM / glm.fit2: step size truncated / cannot correct step size
+:   The shrinkage GLMs use a fitting routine (glm.fit2)
+    built around a simple safety check. At each step, if the proposed update
+    would make the fit worse rather than better, the update is halved and tried
+    again until it improves, and each time this happens a message is logged. 
+    This is common with a Gamma/log model when the predictors are correlated.
+    The "cannot correct step size" message means the routine used up its allowed
+    halvings at that step and carried on from the best result it had so far.
+    What actually matters is whether the fit settles in the end, and we record
+    that for every fit. Across the `r fmt(n_runs, 0)` runs, the outcome is
+    summarised in the table below. The number of passes stays far below the
+    ceiling of 250, ranging from 
+    `r fmt(mean(final_results$NoIt[final_results$Model == "SR"], na.rm = TRUE), 1)`
+    for SR to 
+    `r fmt(mean(final_results$NoIt[final_results$Model == "GLM2"], na.rm = TRUE), 1)` for GLM2, and every fit in this family (GLM2 and the six
+    savvyGLM estimators) settles in all `r fmt(n_runs, 0)` runs. The glmnet
+    models (RR and EN) do not report a comparable per-fit flag, and their counts
+    measure a different kind of step, so they are left blank in the table and
+    not compared with the rest.
+
+
+```{r apx-b-conv-table}
+noit_tab <- aggregate(NoIt ~ Model, final_results, mean, na.rm = TRUE)
+conv_pct <- aggregate(final_results$Converged,
+  by = list(Model = final_results$Model),
+  FUN = function(x) {
+    if (all(is.na(x))) {
+      NA_real_
+    } else {
+      100 * mean(x, na.rm = TRUE)
+    }
+  }
+)
+names(conv_pct)[2] <- "Converged"
+conv_kbl <- merge(conv_pct, noit_tab, by = "Model", all = TRUE)
+conv_kbl <- conv_kbl[match(model_names, conv_kbl$Model), ]
+kable(conv_kbl,
+  row.names = FALSE, booktabs = TRUE, digits = c(NA, 1, 1),
+  col.names = c("Model", "Converged (\\% of runs)", "Mean NoIt"),
+  escape = FALSE,
+  caption = paste0(
+    "Convergence across the ", fmt(n_runs, 0), " evaluation runs. glmnet does not expose a per-fit convergence flag, shown as a dash. Its NoIt column counts coordinate-descent passes rather than IRLS iterations, so the two are not directly comparable."
+  )
+) |>
+  kable_styling(
+    full_width = FALSE, position = "center",
+    latex_options = "hold_position"
+  )
+```
+
+
+```{=latex}
+\clearpage
+\newpage
+```
 
 # Interactive R Shiny Dashboard {#apd-dashboard}
 
