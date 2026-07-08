@@ -978,6 +978,434 @@ ggplot(sector_tab, aes(x = Count, y = reorder(Sector, Count))) +
 \sectionmark{Shrinkage GLMs for Insurance Claim Severity Estimation}
 ```
 
+
+```{r b-setup, include=FALSE}
+# BE note: seed already set above.
+#          > also moved libraries up to pre-loading shared with part A
+
+# shared fitting config
+n_folds <- 5
+control_list <- list(maxit = 250, epsilon = 1e-6, trace = FALSE)
+family_type <- Gamma(link = "log")
+
+# Model formula and the columns that get standardised. Defined here -> used by:
+# > the CV engine
+# > the B3 in-sample fit
+# > appendix sensitivity checks
+glm_formula <- Severity ~ BonusMalus_Log + VehPower_Log + Density_Log +
+  DrivAge_Sp1 + DrivAge_Sp2 + DrivAge_Sp3 +
+  VehAge_Sp1 + VehAge_Sp2 + VehAge_Sp3 +
+  VehGas + TE_Region + TE_Area + TE_VehBrand
+scale_cols <- c(
+  "BonusMalus_Log", "VehPower_Log", "Density_Log",
+  "DrivAge_Sp1", "DrivAge_Sp2", "DrivAge_Sp3",
+  "VehAge_Sp1", "VehAge_Sp2", "VehAge_Sp3",
+  "TE_Region", "TE_Area", "TE_VehBrand"
+)
+
+# put model names in order
+model_names <- c("GLM2", "RR", "EN", "QIS", "LW", "SR", "GSR", "St", "DSh")
+```
+
+```{r b-data-prep, include=FALSE}
+# BE note: changed to relative paths, just put all data in data folder
+freq <- read.csv("data/freMTPL2freq.csv")
+sev <- read.csv("data/freMTPL2sev.csv")
+
+# Aggregate severity by policy ID (& merge with frequency features)
+sev_agg <- aggregate(ClaimAmount ~ IDpol, data = sev, FUN = sum)
+data <- merge(freq, sev_agg, by = "IDpol")
+
+# Filter for exactly 1 claim and positive claim amount
+data_sev <- data[data$ClaimNb == 1 & data$ClaimAmount > 0, ]
+
+# Group seed set before the single random draw of 1,000 rows just to be safe
+# (avoiding part A rng leakage)
+
+set.seed(group_num)
+# Randomly sample exactly 1000 rows
+data_sev <- data_sev[sample(nrow(data_sev), 1000), ]
+# for generality (= ClaimAmount)
+data_sev$Severity <- data_sev$ClaimAmount / data_sev$ClaimNb
+
+# Squash heavy tails and bound implausible values.
+# > defaults:
+#   VehPower capped at 9
+#   BonusMalus at 150
+# sensitivity to both caps is tested in the appendix (apx-b-caps)
+data_sev$VehPower_Log <- log(pmax(pmin(data_sev$VehPower, 9), 1))
+data_sev$Density_Log <- log(pmax(data_sev$Density, 1))
+data_sev$BonusMalus_Log <- log(pmin(data_sev$BonusMalus, 150))
+
+# BE note: quick check -> should be 1000
+n_pol <- nrow(data_sev)
+```
+
+```{r b-metric-helpers, include=FALSE}
+# OOS evaluation metrics ====
+# BE note: removed return function (slightly faster if used in loop)
+calc_rmse_win <- function(actual, predicted, cap_val) {
+  sqrt(mean((pmin(actual, cap_val) - pmin(predicted, cap_val))^2))
+}
+calc_mae_win <- function(actual, predicted, cap_val) {
+  mean(abs(pmin(actual, cap_val) - pmin(predicted, cap_val)))
+}
+
+WeightedGini <- function(actual, weights, predicted) {
+  df <- data.frame(actual = actual, weights = weights, predicted = predicted)
+  df <- df[order(df$predicted, decreasing = TRUE), ]
+  df$random <- cumsum(df$weights / sum(df$weights))
+  totalPositive <- sum(df$actual * df$weights)
+  df$cumPosFound <- cumsum(df$actual * df$weights)
+  df$Lorentz <- df$cumPosFound / totalPositive
+  n <- nrow(df)
+  gini <- sum(df$Lorentz[-n] * df$random[-1]) - sum(df$Lorentz[-1] * df$random[-n])
+  # implicity return
+  gini
+}
+NormalisedWeightedGini <- function(actual, weights, predicted) {
+  model_gini <- WeightedGini(actual, weights, predicted)
+  max_gini <- WeightedGini(actual, weights, actual)
+  # implicity return
+  model_gini / max_gini
+}
+```
+
+```{r b-feature-engine, include=FALSE}
+# Leakage-safe feature construction ====
+# Used for appendix?*!
+# function encapsulating the pipeline used inside every CV fold
+#   splines fitted on training rows only
+#   smoothed leave-one-out target encoding learned on training rows only
+#   standardisation frozen at training means/sds.
+# With test = NULL it prepares the full dataset for the in-sample analysis (B3) and for the appendix sensitivity checks, using the same construction.
+
+build_features <- function(train, test = NULL,
+                           veh_cap = 9, bm_cap = 150,
+                           driv_df = 3, veh_df = 3,
+                           k_smooth = 20, standardise = TRUE) {
+  # reapply caps from the raw columns so the appendix can vary them
+  for (d in list(quote(train), quote(test))) {
+    dd <- eval(d)
+    if (is.null(dd)) next
+    dd$VehPower_Log <- log(pmax(pmin(dd$VehPower, veh_cap), 1))
+    dd$Density_Log <- log(pmax(dd$Density, 1))
+    dd$BonusMalus_Log <- log(pmin(dd$BonusMalus, bm_cap))
+    if (identical(d, quote(train))) train <- dd else test <- dd
+  }
+
+  # Natural cubic splines fitted strictly on the training data
+  driv_splines <- ns(train$DrivAge, df = driv_df)
+  veh_splines <- ns(train$VehAge, df = veh_df)
+  for (j in seq_len(driv_df)) train[[paste0("DrivAge_Sp", j)]] <- driv_splines[, j]
+  for (j in seq_len(veh_df)) train[[paste0("VehAge_Sp", j)]] <- veh_splines[, j]
+  if (!is.null(test)) {
+    tdb <- predict(driv_splines, test$DrivAge)
+    tvb <- predict(veh_splines, test$VehAge)
+    for (j in seq_len(driv_df)) test[[paste0("DrivAge_Sp", j)]] <- tdb[, j]
+    for (j in seq_len(veh_df)) test[[paste0("VehAge_Sp", j)]] <- tvb[, j]
+  }
+
+  # actuarial (credibility-smoothed) target encoding with leave-one-out on
+  # the training rows, and the full training dictionary projected onto test
+  te_cols <- c("Region", "Area", "VehBrand")
+  global_mean_train <- sum(train$ClaimAmount) / sum(train$ClaimNb)
+  for (col in te_cols) {
+    group_amt <- tapply(train$ClaimAmount, train[[col]], sum)
+    group_clm <- tapply(train$ClaimNb, train[[col]], sum)
+    grp_idx <- as.character(train[[col]])
+    loo_amt <- group_amt[grp_idx] - train$ClaimAmount
+    loo_clm <- group_clm[grp_idx] - train$ClaimNb
+    lambda_train <- loo_clm / (loo_clm + k_smooth)
+    mu_train <- ifelse(loo_clm > 0, loo_amt / loo_clm, global_mean_train)
+    train[[paste0("TE_", col)]] <-
+      lambda_train * mu_train + (1 - lambda_train) * global_mean_train
+    if (!is.null(test)) {
+      full_lambda <- group_clm / (group_clm + k_smooth)
+      full_mu <- group_amt / group_clm
+      dict <- full_lambda * full_mu + (1 - full_lambda) * global_mean_train
+      te <- dict[as.character(test[[col]])]
+      te[is.na(te)] <- global_mean_train # unseen levels -> global baseline
+      test[[paste0("TE_", col)]] <- te
+    }
+  }
+
+  # Standardisation, frozen at training-data parameters
+  # Not strictly required for glm2/savvyGLM/glmnet -> see (apx-b-scaling)
+  # retained for posterity
+  sc <- intersect(scale_cols, names(train))
+  if (standardise) {
+    tm <- colMeans(train[, sc])
+    ts <- apply(train[, sc], 2, sd)
+    ts[ts == 0] <- 1
+    for (col in sc) {
+      train[[col]] <- (train[[col]] - tm[col]) / ts[col]
+      if (!is.null(test)) test[[col]] <- (test[[col]] - tm[col]) / ts[col]
+    }
+  }
+  list(train = train, test = test)
+}
+
+# Single dispatcher: model name -> coefficient vector aligned to columns of X
+# Used by B3 and the appendix so the best model is picked in one place
+fit_model_coefs <- function(model, X, y, w) {
+  if (model == "GLM2") {
+    m <- glm.fit2(
+      x = X, y = y, weights = w,
+      family = family_type, control = control_list
+    )
+    m$coefficients
+  } else if (model %in% c("RR", "EN")) {
+    m <- cv.glmnet(X[, -1], y,
+      weights = w, family = Gamma(link = "log"),
+      alpha = ifelse(model == "RR", 0, 0.5),
+      nlambda = 50, nfolds = 5
+    )
+    as.vector(coef(m, s = "lambda.min"))
+  } else {
+    m <- savvy_glm.fit2(
+      x = X, y = y, weights = w, family = family_type,
+      model_class = model, control = control_list
+    )
+    m$coefficients
+  }
+}
+```
+
+```{r b-cv-function, include=FALSE}
+# Cross-validation engine (B1) ====
+# BE note: cv_seed_base following tutorial code
+cv_seed_base <- 123
+
+run_single_iteration <- function(i) {
+  repeat_idx <- floor((i - 1) / n_folds) + 1 # 1..100 across the 500 runs
+  fold_idx   <- ((i - 1) %% n_folds) + 1     # cycles 1..5 within each repeat
+
+  # Reshuffle FOLD LABELS only (repeat r uses seed cv_seed_base + r for all
+  # five of its runs); the 1,000 sampled rows themselves are never redrawn.
+  set.seed(cv_seed_base + repeat_idx)
+  folds <- sample(rep(1:n_folds, length.out = nrow(data_sev)))
+  test_idx <- which(folds == fold_idx)
+
+  fe <- build_features(data_sev[-test_idx, ], data_sev[test_idx, ])
+  train_data <- fe$train
+  test_data  <- fe$test
+
+  X_train <- model.matrix(glm_formula, train_data)
+  X_test  <- model.matrix(glm_formula, test_data)
+  y_train <- train_data$Severity; y_test <- test_data$Severity
+  w_train <- train_data$ClaimNb;  w_test <- test_data$ClaimNb
+
+  # Winsorisation caps learned from the TRAINING response only
+  cap_99 <- quantile(y_train, probs = 0.99, na.rm = TRUE)
+  cap_95 <- quantile(y_train, probs = 0.95, na.rm = TRUE)
+
+  eval_model <- function(coefs) {
+    if (all(is.na(coefs))) return(rep(NA_real_, 10))
+    safe_coefs <- ifelse(is.na(coefs), 0, coefs)
+    pred_test <- exp(as.numeric(X_test %*% safe_coefs))
+    c(sqrt(mean((y_test - pred_test)^2)),
+      mean(abs(y_test - pred_test)),
+      calc_rmse_win(y_test, pred_test, cap_99),
+      calc_rmse_win(y_test, pred_test, cap_95),
+      calc_mae_win(y_test, pred_test, cap_99),
+      calc_mae_win(y_test, pred_test, cap_95),
+      WeightedGini(y_test, w_test, pred_test),
+      NormalisedWeightedGini(y_test, w_test, pred_test),
+      sum(w_test * Gamma()$dev.resids(y_test, pred_test, 1)),
+      sum(y_test * w_test) / sum(pred_test * w_test))
+  }
+
+  # 1. GLM2 (baseline)
+  t1 <- system.time({ m1 <- glm.fit2(x = X_train, y = y_train, weights = w_train,
+                                     family = family_type, control = control_list) })
+  res1 <- eval_model(m1$coefficients); iter1 <- m1$iter; conv1 <- m1$converged
+  # 2. Ridge
+  t2 <- system.time({ m2 <- cv.glmnet(X_train[, -1], y_train, weights = w_train,
+                                      family = Gamma(link = "log"), alpha = 0,
+                                      nlambda = 50, nfolds = 5) })
+  res2 <- eval_model(as.vector(coef(m2, s = "lambda.min")))
+  iter2 <- if (is.null(m2$glmnet.fit$npasses)) NA else m2$glmnet.fit$npasses[1]
+  conv2 <- NA
+  # 3. Elastic Net
+  t3 <- system.time({ m3 <- cv.glmnet(X_train[, -1], y_train, weights = w_train,
+                                      family = Gamma(link = "log"), alpha = 0.5,
+                                      nlambda = 50, nfolds = 5) })
+  res3 <- eval_model(as.vector(coef(m3, s = "lambda.min")))
+  iter3 <- if (is.null(m3$glmnet.fit$npasses)) NA else m3$glmnet.fit$npasses[1]
+  conv3 <- NA
+  # 4.-9. Shrinkage GLMs (savvyGLM)
+  savvy_classes <- c("St", "DSh", "SR", "GSR", "LW", "QIS")
+  savvy_out <- lapply(savvy_classes, function(cl) {
+    tt <- system.time({ m <- savvy_glm.fit2(x = X_train, y = y_train,
+                                            weights = w_train,
+                                            family = family_type,
+                                            model_class = cl,
+                                            control = control_list) })
+    list(res = eval_model(m$coefficients), t = tt[3], it = m$iter,
+         conv = isTRUE(m$converged))
+  })
+  names(savvy_out) <- savvy_classes
+
+  ord <- c("GLM2", "RR", "EN", "QIS", "LW", "SR", "GSR", "St", "DSh")
+  all_res <- rbind(res1, res2, res3,
+                   savvy_out$QIS$res, savvy_out$LW$res, savvy_out$SR$res,
+                   savvy_out$GSR$res, savvy_out$St$res, savvy_out$DSh$res)
+  times <- c(t1[3], t2[3], t3[3], sapply(ord[4:9], function(cl) savvy_out[[cl]]$t))
+  iters <- c(iter1, iter2, iter3, sapply(ord[4:9], function(cl) savvy_out[[cl]]$it))
+  convs <- c(conv1, conv2, conv3, sapply(ord[4:9], function(cl) savvy_out[[cl]]$conv))
+
+  df_metrics <- data.frame(Iteration = i, Model = ord,
+             RMSE = all_res[, 1], MAE = all_res[, 2],
+             RMSE_Win_99 = all_res[, 3], RMSE_Win_95 = all_res[, 4],
+             MAE_Win_99 = all_res[, 5], MAE_Win_95 = all_res[, 6],
+             Gini_Raw = all_res[, 7], Gini_Norm = all_res[, 8],
+             Dev = all_res[, 9], AE_Ratio = all_res[, 10],
+             CT = as.numeric(times), NoIt = as.numeric(iters),
+             Converged = convs)
+
+  df_metrics
+}
+
+```
+
+```{r b1-loop, eval=FALSE, echo=FALSE}
+# NOTE: the full 100 x 5 = 500-run loop takes ~20 minutes
+# results are pre-computed once and cached to final_results.rds (loaded below)
+n_repeats <- 100
+n_iter <- n_repeats * n_folds
+results_list <- vector("list", n_iter)
+for (i in seq_len(n_iter)) {
+  results_list[[i]] <- run_single_iteration(i)
+  cat(sprintf("Finished iteration %d of %d.\n", i, n_iter))
+}
+final_results <- do.call(rbind, results_list)
+saveRDS(final_results, "data/final_results.rds")
+```
+
+```{r b1-load, eval=TRUE, echo=FALSE}
+# Load cached results & check the cache matches the final configuration
+#   filter ClaimNb == 1
+#   group seed 12
+#   n = 1,000
+#   500 runs
+#   9 models
+final_results <- readRDS("data/final_results.rds")
+n_runs <- length(unique(final_results$Iteration))
+stopifnot(
+  n_pol == 1000,
+  n_runs == 500,
+  setequal(unique(final_results$Model), model_names)
+)
+```
+
+```{r b1-summaries, include=FALSE}
+# Raw and relative performance tables ====
+metric_cols <- c(
+  "RMSE", "MAE", "RMSE_Win_99", "RMSE_Win_95",
+  "MAE_Win_99", "MAE_Win_95", "Dev",
+  "Gini_Raw", "Gini_Norm", "AE_Ratio", "CT", "NoIt"
+)
+
+# Raw table: mean of each metric per model across all 500 runs
+raw_tab <- aggregate(final_results[, metric_cols],
+  by = list(Model = final_results$Model),
+  FUN = mean, na.rm = TRUE
+)
+raw_tab <- raw_tab[match(model_names, raw_tab$Model), ]
+
+# Relative table: mean of PER-RUN ratios vs the GLM2 value in the SAME run
+# (ratio-of-averages would understate run-to-run variation; the brief asks
+# for the average of ratios).
+glm2_rows <- final_results[final_results$Model == "GLM2", ]
+glm2_aligned <- glm2_rows[
+  match(final_results$Iteration, glm2_rows$Iteration),
+  metric_cols
+]
+rel_runs <- final_results
+rel_runs[metric_cols] <- final_results[metric_cols] / glm2_aligned
+rel_tab <- aggregate(rel_runs[, metric_cols],
+  by = list(Model = rel_runs$Model),
+  FUN = mean, na.rm = TRUE
+)
+rel_tab <- rel_tab[match(model_names, rel_tab$Model), ]
+
+# Direction of "better", per the brief, used for highlighting
+metric_dir <- c(
+  RMSE = "min", MAE = "min", RMSE_Win_99 = "min",
+  RMSE_Win_95 = "min", MAE_Win_99 = "min", MAE_Win_95 = "min",
+  Dev = "min", Gini_Raw = "max", Gini_Norm = "max",
+  AE_Ratio = "one", CT = "min", NoIt = "min"
+)
+best_flag <- function(v, dir) {
+  switch(dir,
+    min = v == min(v, na.rm = TRUE),
+    max = v == max(v, na.rm = TRUE),
+    one = abs(v - 1) == min(abs(v - 1), na.rm = TRUE)
+  )
+}
+
+# Convergence summary for the appendix (NA for glmnet, which does not expose
+# a comparable flag; its warnings are discussed in §\@ref(apx-b-convergence))
+conv_tab <- aggregate(Converged ~ Model,
+  data = final_results,
+  FUN = function(x) 100 * mean(x, na.rm = TRUE)
+)
+```
+
+```{r b2-best, include=FALSE}
+# Model selection for B2
+#   executive summary, B2 prose and the B3 in-sample fit read from this
+best_model <- "RR"
+
+# Headline numbers for the chosen model, for inline reference
+bm_rel <- rel_tab[rel_tab$Model == best_model, ]
+bm_raw <- raw_tab[raw_tab$Model == best_model, ]
+g2_raw <- raw_tab[raw_tab$Model == "GLM2", ]
+bm_rmse95_gain <- 100 * (1 - bm_rel$RMSE_Win_95) # % improvement vs GLM2
+bm_mae95_gain <- 100 * (1 - bm_rel$MAE_Win_95)
+```
+
+```{r b3-insample, include=FALSE}
+# B3: in-sample analysis of the chosen model on all 1,000 observations ====
+# The full dataset plays the role of the training set: splines, leave-one-out
+# target encoding and standardisation are all built on the same 1,000 rows.
+fe_full <- build_features(data_sev, test = NULL)
+full_data <- fe_full$train
+X_full <- model.matrix(glm_formula, full_data)
+y_full <- full_data$Severity
+w_full <- full_data$ClaimNb
+
+set.seed(group_num)
+coefs_full <- fit_model_coefs(best_model, X_full, y_full, w_full)
+coefs_full[is.na(coefs_full)] <- 0
+mu_full <- exp(as.numeric(X_full %*% coefs_full))
+
+# In-sample summary metrics
+is_rmse <- sqrt(mean((y_full - mu_full)^2))
+is_mae <- mean(abs(y_full - mu_full))
+is_gini <- NormalisedWeightedGini(y_full, w_full, mu_full)
+is_ae <- sum(y_full * w_full) / sum(mu_full * w_full)
+is_dev <- sum(w_full * Gamma()$dev.resids(y_full, mu_full, 1))
+null_mu <- weighted.mean(y_full, w_full)
+is_dev_null <- sum(w_full * Gamma()$dev.resids(y_full, rep(null_mu, n_pol), 1))
+is_pseudoR2 <- 1 - is_dev / is_dev_null
+
+# Deviance residuals and calibration by predicted-severity decile
+dev_res <- sign(y_full - mu_full) *
+  sqrt(w_full * Gamma()$dev.resids(y_full, mu_full, 1))
+decile_tab <- data.frame(y = y_full, mu = mu_full) |>
+  dplyr::mutate(Decile = dplyr::ntile(mu, 10)) |>
+  dplyr::group_by(Decile) |>
+  dplyr::summarise(
+    N = dplyr::n(),
+    `Mean predicted` = mean(mu),
+    `Mean actual` = mean(y),
+    `AE ratio` = sum(y) / sum(mu),
+    .groups = "drop"
+  )
+```
+
 ---
 
 
