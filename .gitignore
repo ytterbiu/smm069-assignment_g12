@@ -4,6 +4,7 @@ a_submission-docs/
 resources-for-gen-ai/
 .venv/
 gau*/
+app*
 
 # user settings
 .*DS_Store/*

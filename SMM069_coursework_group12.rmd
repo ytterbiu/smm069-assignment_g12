@@ -1210,39 +1210,33 @@ kable(kbl_cond,
 ```
 
 ```{=latex}
-\newpage
+% \newpage
 ```
 
 ## Scale-sensitive out-of-sample metrics {#apx-scale}
 
-<!-- The annualised Sharpe ratio is invariant to positive rescaling of the weight -->
-<!-- vector. It cannot distinguish -->
-<!-- portfolios that are far apart in leverage, trading, and exposure, differences -->
-<!-- that determine whether a strategy can actually be run. The metrics in -->
-<!-- Table \@ref(tab:scale-metrics) are chosen because they respond to scale and they are computed on the stitched out-of-sample series, -->
-<!-- with the test windows concatenated in time order. This is why the Sharpe column -->
-<!-- differs from the per-window average in Table \@ref(tab:a-headline-sharpe). CE is -->
-<!-- the realised certainty-equivalent return, -->
-<!-- $\text{annual return} - \tfrac{\omega}{2}\,\text{annual variance}$, where -->
-<!-- $\omega = 1$ is the evaluation risk aversion, distinct from the $\gamma$ that -->
-<!-- scales the portfolio weights. Leverage and max weight are averaged across -->
-<!-- windows, turnover is per monthly rebalance, and net-short counts the windows with -->
-<!-- $c = \mathbf 1^\top\Sigma^{-1}\hat\mu < 0$. -->
-
-
-
 The annualised Sharpe ratio is invariant to positive rescaling of the weight
-vector, so it cannot see differences that matter for implementation. The metrics
-in Table \@ref(tab:scale-metrics) are not scale-invariant: they are computed on
-the stitched out-of-sample series (test windows concatenated in time order), so
-the Sharpe column differs from the per-window average in
-Table \@ref(tab:a-headline-sharpe). CE is the realised certainty-equivalent return,
-$\text{annual return} - \tfrac{\omega}{2}\,\text{annual variance}$ with
-$\omega = 1$; leverage and max weight are averaged across windows; turnover is per
-monthly rebalance; net-short counts windows with
-$c = \mathbf 1^\top\Sigma^{-1}\hat\mu < 0$.
+vector, so it cannot distinguish portfolios that differ sharply in leverage,
+trading and exposure. However these are the features that determine whether a strategy can be run. Table \@ref(tab:scale-metrics) shows metrics that respond
+to scale computed on the stitched out-of-sample series, with the `r n_windows`
+test windows concatenated in time order. As such, the Sharpe ratios differ
+from the per-window average shown in Table \@ref(tab:a-headline-sharpe).
 
-Note: Turnover compares target weights at consecutive rebalances and does not account for the drift of holdings by intervening returns. It therefore approximates true trading volume, and because the same simplification applies to every strategy, cross-strategy comparisons are unaffected.
+The certainty-equivalent (CE) return is the risk-adjusted return an investor
+with risk aversion $\gamma$ would trade the strategy for, computed as the
+annualised excess return minus $\tfrac{\gamma}{2}$ times the annualised
+variance. This uses the same $\gamma = 1$ as the portfolio construction
+(Section \@ref(a3)). Gross leverage (the sum of absolute weights) and
+maximum absolute weight are averaged across windows. Turnover is the change in
+weights per monthly rebalance. The net-short count is the number of windows in
+which the tangency normaliser $c = \mathbf 1^\top\Sigma^{-1}\hat\mu$ is
+negative.
+
+Turnover compares target weights at consecutive rebalances and does not account
+for the drift of holdings by intervening returns. This approximates true
+trading volume and because the same simplification applies to every strategy,
+cross-strategy comparisons are unaffected.
+
 
 ```{r scale-metrics}
 # options(knitr.kable.NA = "---")
@@ -1269,18 +1263,48 @@ options(knitr.kable.NA = "---")
 
 tf <- data.frame(
   Strategy = sub("^(MV|TP)_", "", rownames(tab_full)),
-  tab_full, row.names = NULL, check.names = FALSE
+  tab_full,
+  row.names = NULL,
+  check.names = FALSE
 )
 
-best_sr <- tf$Sharpe == max(tf$Sharpe, na.rm = TRUE)
-best_ce <- tf$CE     == max(tf$CE,     na.rm = TRUE)
+rank_best <- function(x, highest_is_best = TRUE) {
+  u <- sort(unique(x[!is.na(x)]), decreasing = highest_is_best)
+  match(x, u)
+}
+# Green -> Orange -> Black
+color_top2 <- function(x, highest_is_best = TRUE) {
+  r <- rank_best(x, highest_is_best)
+  col <- rep("black", length(x))
+  col[!is.na(r) & r == 1L] <- "#1b9e77"
+  col[!is.na(r) & r == 2L] <- "#d95f02"
+  col
+}
+bold_top2 <- function(x, highest_is_best = TRUE) {
+  r <- rank_best(x, highest_is_best)
+  !is.na(r) & r <= 2L
+}
 
-kable(tf,
-  digits = c(0, 2, 2, 2, 1, 1, 2, 1, 0),   # leading 0 for Strategy
+style_map <- list(
+  list(col = 2, hi = TRUE), # Ann. excess return
+  list(col = 3, hi = FALSE), # Ann. volatility
+  list(col = 4, hi = TRUE), # Sharpe
+  list(col = 5, hi = TRUE), # Certainty equivalent
+  list(col = 6, hi = FALSE), # Gross leverage
+  list(col = 7, hi = FALSE), # Max weight
+  list(col = 8, hi = FALSE) # Turnover
+  # list(col = 9, hi = FALSE) # Net-short count
+)
+
+# best_sr <- tf$Sharpe == max(tf$Sharpe, na.rm = TRUE)
+# best_ce <- tf$CE     == max(tf$CE,     na.rm = TRUE)
+
+kt <- kable(tf,
+  digits = c(0, 3, 3, 3, 1, 1, 2, 1, 0), # leading 0 for Strategy
   format.args = list(big.mark = ","), booktabs = TRUE, row.names = FALSE,
-  caption = "Scale-sensitive out-of-sample metrics, full period (annualised weekly excess returns, omega = 1). Sharpe is on the stitched OOS series; CE is the realised certainty-equivalent; leverage and max weight are window averages; turnover is per monthly rebalance; net-short counts windows with negative sum(z).",
+  caption = "Scale-sensitive out-of-sample metrics over the full period, using annualised weekly excess returns with risk aversion gamma = 1. The Sharpe ratio is computed on the stitched out-of-sample series. The certainty-equivalent return is the annualised excess return minus half the annualised variance. Gross leverage (sum of absolute weights) and maximum absolute weight are averaged across windows. Turnover is measured per monthly rebalance. The net-short count is the number of windows with a negative tangency normaliser. Within each column, the best and second-best values are shown in green and orange respectively.",
   col.names = c(
-    "Strategy", "Ann. ex. ret.", "Ann. vol.", "Sharpe", "CE",
+    "Strategy", "Ann. ex. ret.", "Ann. vol.", "Sharpe", "Cert. equiv.",
     "Gross lev.", "Max wt", "Turnover", "Net-short"
   ),
   linesep = ""
@@ -1294,27 +1318,50 @@ kable(tf,
     "Benchmark" = 1,
     "Mean-variance portfolio" = length(est_order),
     "Tangency portfolio" = length(est_order)
-  )) |>
-  column_spec(4, bold = best_sr, color = ifelse(best_sr, "#1b9e77", "black")) |>
-  column_spec(5, bold = best_ce, color = ifelse(best_ce, "#1b9e77", "black"))
+  ))
+  # column_spec(4, bold = best_sr, color = ifelse(best_sr, "#1b9e77", "black")) |>
+  # column_spec(5, bold = best_ce, color = ifelse(best_ce, "#1b9e77", "black"))
+
+for (s in style_map) {
+  x  <- tf[[s$col]]
+  kt <- column_spec(kt, s$col, bold = bold_top2(x, s$hi), color = color_top2(x, s$hi))
+}
+kt
 ```
 
-## In-sample versus out-of-sample Sharpe {#apx-inout}
+## Tangency sign flips {#apx-inout}
 
-The tangency weights are $\Sigma^{-1}\mu / (\mathbf 1^\top\Sigma^{-1}\mu)$; when
-the denominator $c = \mathbf 1^\top\Sigma^{-1}\mu$ is negative, the "maximiser" in
-fact returns the minimum-Sharpe portfolio, so the in-sample Sharpe goes large and
-negative. Counting those sign-flip windows is a useful diagnostic - they cluster
-in high-volatility regimes, exactly where the equal-weight portfolio wins because
-it never optimises. Table \@ref(tab:inout-table) reports, per estimator, the share
-of windows that flip and the average out-of-sample Sharpe in flipped versus
-non-flipped windows; Figure \@ref(fig:inout-fig) plots in- against out-of-sample
-Sharpe.
+The tangency weights are $\Sigma^{-1}\hat\mu / c$ with 
+$c = \mathbf 1^\top\Sigma^{-1}\hat\mu$. When $c$ is negative the construction
+returns the minimum-Sharpe portfolio rather than the maximum-Sharpe one, so the
+in-sample Sharpe ratio becomes large and negative. Counting these net-short
+windows is a useful diagnostic, because they tend to cluster in high-volatility
+regimes, exactly where the equal-weighted portfolio does well by never
+optimising. Table \@ref(tab:inout-table) shows the share of windows that flip
+and the average out-of-sample Sharpe in flipped versus non-flipped windows, for
+each estimator. 
 
-As elsewhere, the Sample and `St-MSh` rows coincide exactly: since
-$\hat c > 0$, the sign of $c = \mathbf 1^\top\Sigma^{-1}\hat\mu$ is unchanged
-by the shrinkage, so the two estimators flip in precisely the same windows
-(Appendix \@ref(apx-stmsh-vs-sample)).
+Figure \@ref(fig:inout-fig) plots in-sample against out-of-sample Sharpe, with
+net-short windows highlighted. Out-of-sample Sharpe sits in a narrow band around
+zero across the full in-sample range, with no upward trend, showing that a
+strong in-sample Sharpe does not translate into a strong out-of-sample one. The flip windows separate the estimators by design. For the
+mean-shrinkage estimators (`St-MSh`, `D-MSh`, `O-LSh`, `T-LSh`) and `Jorion`,
+the flips concentrate at negative in-sample Sharpe, so these methods turn
+net-short mainly when recent performance was poor. `Wang` and `BOP` behave in
+the opposite way, flipping at positive in-sample Sharpe, and `BOP` flips far
+more often than any other estimator 
+(`r fmt(inout_summary$"Windows flipped (%)"[inout_summary$estimator == "BOP"],1)`% 
+of windows against 
+`r fmt(inout_summary$"Windows flipped (%)"[inout_summary$estimator == "Wang"],1)`%
+for `Wang`). This split aligns with the loss functions for each estimator
+(Appendix \@ref(apx-method-mean-vec-estimators)). Estimators that shrink toward
+the grand mean under mean-squared error flip in one regime, and the two that
+shrink toward the unit vector under the invariant loss flip in the other.
+
+As before the Sample and `St-MSh` rows coincide exactly. As $\hat c > 0$, the sign
+of $c = \mathbf 1^\top\Sigma^{-1}\hat\mu$ is unchanged by the shrinkage, so the
+two estimators flip in the same windows (Appendix
+\@ref(apx-stmsh-vs-sample)).
 
 ```{r inout-table}
 kable(inout_summary,
@@ -1339,18 +1386,18 @@ ggplot(diag_df, aes(IS, OOS, color = flip)) +
   theme_minimal()
 ```
 
-## The $\mathbf 1^\top\Sigma^{-1}\hat\mu \approx 0$ pathology {#apx-pathology}
+## The near-zero normaliser {#apx-pathology}
 
-Tangency gross leverage in window $k$ is $\sum_i |z_i| / |c_k|$ with
-$c_k = \mathbf 1^\top\Sigma^{-1}\hat\mu$. When a window lands with $c_k$ close to
-zero, the weights explode and every moment-based metric (return, volatility, CE,
-leverage, turnover) is dominated by that one window - while the window's
-per-window Sharpe is unchanged (it is scale-invariant), which is why the headline
-table cannot see the problem. The closest approach to zero across windows is
-smallest for D-MSh: at window `r k_bad` (`r format(date_bad, "%d %B %Y")`),
-$c \approx `r formatC(sumz_bad, format = "f", digits = 4)`$ drives TP_DMSh gross
-leverage to about `r fmt(lev_bad, 0)`. Table \@ref(tab:pathology-table) lists the
-minimum $|c|$ per estimator.
+Distinct from the sign flip, the tangency weights explode when $c$ passes close
+to zero rather than merely reversing. Tangency gross leverage in window $k$ is
+$\sum_i |z_i| / |c_k|$, so as $c_k \to 0$ the leverage diverges and every
+moment-based metric (return, volatility, certainty-equivalent, leverage,
+turnover) is dominated by that one window. The closest approach to zero across
+windows is smallest for `D-MSh`. 
+At window `r k_bad` (`r format(date_bad, "%d %B %Y")`),
+$c \approx `r formatC(sumz_bad, format = "f", digits = 4)`$ drives `TP_DMSh`
+gross leverage to `r fmt(lev_bad, 0)`. Table
+\@ref(tab:pathology-table) lists the minimum $|c|$ per estimator.
 
 ```{r pathology-table}
 patho <- data.frame(
@@ -1365,49 +1412,38 @@ kable(patho,
   kable_styling(full_width = FALSE, position = "center", latex_options = "hold_position")
 ```
 
-## Sampled companies and sector exposure {#apx-stocks}
+## Sample composition and the full universe {#apx-stocks}
 
-Figure \@ref(fig:gics-fig) (in \@ref(a5)) shows the sector composition. The full
-list of the 100 sampled companies, grouped by GICS sector, is in Table
-\@ref(tab:stocks-table).
+Figure \@ref(fig:apx-a-stock-plots) shows how our sample compares to the wider context of the full estimation universe. The top panel compares the equal-weighted cumulative
+return of the `r no_companies` Group `r group_num` stocks against the full
+`r ncol(returns_all)`-stock universe, both re-based to 1 and shown on a
+log axis. The
+full-universe series is an equal-weighted proxy for the market rather than the
+cap-weighted S&P 500. The bottom panel decomposes the full universe into its
+GICS sectors on the same basis. The shaded bands mark the financial-crisis and
+pandemic sub-periods. The sector paths show why our sample's light Technology
+weighting muted its pandemic Sharpe ratios. The technology-led sectors that
+compounded fastest after 2020 are exactly the ones our draw underweights
+(Figure \@ref(fig:gics-fig)). 
 
-```{r stocks-table}
-stocks_tbl <- gics[
-  gics$DA441_column_name %in% selected,
-  c("company_ticker", "company_name", "GICS Sector Name")
-]
-stocks_tbl <- stocks_tbl[order(stocks_tbl[["GICS Sector Name"]], stocks_tbl$company_ticker), ]
-colnames(stocks_tbl) <- c("Ticker", "Company", "GICS Sector")
-idx <- rle(as.character(stocks_tbl$`GICS Sector`)) # sector run-lengths (table is sector-sorted)
-kable(stocks_tbl[, c("Ticker", "Company")],
-  booktabs = TRUE, longtable = TRUE,
-  caption = "Our (Group 12's) 100 sampled companies, grouped by GICS sector."
-) |>
-  kable_styling(full_width = FALSE, font_size = 9, latex_options = c("repeat_header")) |>
-  pack_rows(index = setNames(idx$lengths, idx$values))
+The full list of our `r no_companies` companies, grouped by GICS sector, is
+given in Table \@ref(tab:stocks-table).
+
+```{=latex}
+\newpage
 ```
 
-## Our `r no_companies` stocks (Group `r group_num`) versus the full universe {#apx-universe}
-
-Raw returns, equal-weighted, on a log axis so the 2008 and 2020 drawdowns stay
-legible across 24 years. The full-441 equal-weight series is an equal-weight proxy
-for the market, not the cap-weighted S&P 500. Figure \@ref(fig:universe-fig)
-compares the Group 12 sample with the full universe; Figure \@ref(fig:sector-fig)
-shows the cumulative path of each GICS sector, illustrating why the sample's light
-Technology weighting muted its pandemic Sharpe ratios.
-
-```{r apx-a-stock-plots, fig.cap="Rebased equal-weighted values for the SP 500 from x to y!. Top: Group 12 sample versus the full X*! universe. Bottom: Full XJ*! universe grouped by GICS sector.", fig.width=6.5, fig.height=7.5}
+```{r apx-a-stock-plots, fig.cap = paste0("Rebased equal-weighted cumulative returns, ",format(min(dates), "%B %Y"), " to ", format(max(dates), "%B %Y"),", on a log axis. Top: the ", no_companies, " Group ", group_num," stocks against the full ", ncol(returns_all),"-stock universe. Bottom: the full universe split by GICS sector. ", "Shaded bands mark the financial-crisis and pandemic sub-periods."), fig.width=6.5, fig.height=7.5}
 regimes <- data.frame(
   Regime = c("Financial crisis", "Pandemic"),
   xmin = c(fc_lo, pd_lo),
   xmax = c(fc_hi, pd_hi)
 )
 
-# BE note: don't like hard coded values here
 cum_df <- data.frame(
   Date = dates,
   `Group 12 (100)` = cumprod(1 + rowMeans(returns100)),
-  `All DA441 (441)` = cumprod(1 + rowMeans(returns_all)),
+  `Full universe (441)` = cumprod(1 + rowMeans(returns_all)),
   check.names = FALSE
 )
 
@@ -1465,6 +1501,22 @@ p2 <- ggplot(
 p1 / p2
 ```
 
+```{r stocks-table}
+stocks_tbl <- gics[
+  gics$DA441_column_name %in% selected,
+  c("company_ticker", "company_name", "GICS Sector Name")
+]
+stocks_tbl <- stocks_tbl[order(stocks_tbl[["GICS Sector Name"]], stocks_tbl$company_ticker), ]
+colnames(stocks_tbl) <- c("Ticker", "Company", "GICS Sector")
+idx <- rle(as.character(stocks_tbl$`GICS Sector`)) # sector run-lengths (table is sector-sorted)
+kable(stocks_tbl[, c("Ticker", "Company")],
+  booktabs = TRUE, longtable = TRUE,
+  caption = "Our (Group 12's) 100 sampled companies, grouped by GICS sector."
+) |>
+  kable_styling(full_width = FALSE, font_size = 9, latex_options = c("repeat_header")) |>
+  pack_rows(index = setNames(idx$lengths, idx$values))
+```
+
 ```{=latex}
 \clearpage
 \newpage
@@ -1472,7 +1524,16 @@ p1 / p2
 
 # Coursework 2: supplementary analyses {#apd-b}
 
+# Interactive R Shiny Dashboard {#apd-dashboard}
 
+To enable an interactive exploration of (stuff), an R Shiny dashboard was constructed
+and deployed to shinyapps.io. The application is available via:
+
+- TBC
+
+```{r appendix-dashboard-1, eval=FALSE, echo=FALSE, purl=FALSE, out.width="90%", fig.cap="The R Shiny dashboard interface. A selection of US equities is downloaded globally on application start-up to avoid repeated API requests and rate-limiting restrictions. The sidebar allows users to specify the historical date window for volatility estimation, and to adjust the number of time steps ($N$), maturity, the risk-free rate ($r$), and the strike multiplier as a proportion of $S_0$."}
+knitr::include_graphics("fig/appendix-dashboard-1.png")
+```
 
 # Reproducibility, accessibility & AI declaration
 
@@ -1498,58 +1559,68 @@ the same repository (!link TBI). Please note that this commit history reflects
 updates made to the project repository and is not a comprehensive timeline of
 all contributions by group members.
 
-## Generative AI Declaration
+
+# Generative AI declaration {#apd:genai}
 
 Generative AI (GenAI) tools were used throughout this project to assist with
-project planning, methodological validation, and debugging. In practice, these
-tools functioned as an additional technical team member, providing immediate
-feedback, troubleshooting code, and challenging statistical assumptions.
+project planning, methodological validation, debugging, and the development of
+the supplementary interactive dashboard described in Appendix
+\@ref(apd-dashboard). In practice, these tools functioned as an additional
+technical resource, providing immediate feedback, troubleshooting code, and
+discussing conceptual assumptions.
 
-### Tools Used
+## Tools used {-}
 
-! To be updated... Google Gemini 3 Pro (Deep Research), ChatGPT 5.2
+Google Gemini 3 Pro (Deep Research), Claude (Anthropic) Opus 4.8 & Fable 5.
 
-<!-- ### Prompts used -->
+## Prompts used {-}
 
-<!-- The GenAI tools were provided with the 'coursework_CM2_250120.pdf' file and -->
-<!-- extracts from our `R` code. -->
+The GenAI tools were provided with the coursework task sheet and
+extracts from our R code.
+A non-exhaustive list of prompts used is shown below. We opted to include at
+least one example of each *type* of prompt used, rather than a list of all
+prompts. For example, if we entered the prompts "How can we put two ggplots side
+by side?" and "How to remove grey background on a ggplot", we would include only
+the first of these in the list below, as both relate to plotting issues (and are
+similar to querying with a traditional search engine).
 
-<!-- A non-exhaustive list of prompts used is shown below. We opted to include at -->
-<!-- least one example of each _type_ of prompt used, rather than a list of all -->
-<!-- prompts. For example, if we entered the prompts 'How can we put two ggplots side -->
-<!-- by side?' and 'How to remove grey background on a ggplot', we would include only -->
-<!-- the first of these in the list below, as both relate to plotting issues (& are -->
-<!-- similar to 'querying' with a traditional search engine). -->
+- "...the top of both graphs in R are slightly different. (Pasting R code.) Can
+  this be fixed for the plot area?"
+- "Explain the repeated Sharpe-ratio values..."
+- "Help to identify the key points here"
+- "How can this error be tracked down in an Rmd file? `! Text line contains an
+  invalid character. l.1 ^^@^^@...`"
+- "Are there any issues with this app code? Suggest corrections for any potential bugs or errors within the server side code" 
 
-<!-- - "...the top of both graphs in r are slightly different. (Pasting R code.) Can -->
-<!--   this be fixed for the plot area?" -->
-<!-- - "Help to identify the key points here" -->
-<!-- - "How can this error be tracked down in an rmd file? ! Text line contains an -->
-<!--   invalid character. l.1 ^^@^^@..." -->
+## Use of GenAI outputs & subsequent revisions {-}
 
-<!-- ### Use of GenAI outputs & subsequent revisions -->
+The GenAI tools served as a consultative resource for the group. Notably, the AI
+output:
 
-<!-- The GenAI tools served as a "consultant" member of the group. Notably, the AI -->
-<!-- output: -->
+- Helped debug plotting issues and R Markdown compilation errors.
+- Commented on the structure of R code snippets and the report structure.
+- Assisted with converting draft content between document formats.
+- Reviewed elements of the R Shiny app code, identifying bugs and
+  design issues.
 
-<!-- - Helped debug plotting issues. -->
-<!-- - Commented on the structure of R code snippets and the report structure. -->
+## Changes made {-}
 
-<!-- ### Changes made: -->
+All AI suggestions were critically reviewed and debated by the group before
+implementation. For example:
 
-<!-- All AI suggestions were critically reviewed and debated by the group before -->
-<!-- implementation. For example: -->
+- While the AI suggested code for complex layouts, the specific aesthetic
+  choices and annotations were manually adjusted to ensure clarity.
+- Where the AI proposed specific interpretations, these were cross-referenced
+  with academic literature (notably @Asimit15062026 and the lecture notes).
+- In the case of the Shiny dashboard, the AI corrections were evaluated
+  against the original code by the group.  Each identified issue was
+  assessed individually.
+- The final R code for implementation was written and debugged by the group,
+  with AI snippets being treated as drafts rather than final solutions.
 
-<!-- - While the AI suggested code for complex layouts, the specific aesthetic -->
-<!--   choices and annotations were manually adjusted to ensure clarity. -->
-<!-- - Where the AI proposed specific interpretations, these were cross-referenced -->
-<!--   with academic literature and statistics textbooks. -->
-<!-- - The final R code for implementation was written and debugged by the group with -->
-<!--   AI snippets being treated as drafts rather than final solutions. -->
-
-<!-- While GenAI was treated as a collaborator, the final analysis, statistical -->
-<!-- interpretation, and the written content of this report were generated and -->
-<!-- verified by the (human) group members. -->
+While GenAI was treated as a collaborator, the final analysis, statistical
+interpretation, and the written content of this report were generated and
+verified by all group members.
 
 <!-- [^utility-theory]: -->
 <!--     Described in more detail in the appendix (\S\@ref(apd-utility-theory)). -->
