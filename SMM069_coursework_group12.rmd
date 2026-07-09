@@ -69,14 +69,18 @@ This R Markdown document was created as part of a group assignment for SMM069 at
 #               (100% of coursework grade - 100% of module grade).
 #
 # Dependencies:
-#   - TBI
-#
-#   - tidyverse: loads dplyr, tidyr, ggplot2, purrr (& others)
-#   - scales: to express portfolio weights as percentage
-#   - patchwork: for combining multiple plots into one figure
-#
+#   - See below (submitted RMD file so not listed separately here)
+#   
 # Acknowledgements
-#   - TBI
+#   - Asimit, Chen & Lassance (2026), JBES, doi:10.1080/07350015.2026.2638490
+#       -> mean-vector shrinkage estimators, Coursework 1
+#   - Asimit, Avramescu, Chen, Rivas & Senatore (2025), tech. report,
+#     openaccess.city.ac.uk/id/eprint/35099 
+#       -> shrinkage GLMs (savvyGLM), Coursework 2
+#   - SMM069 (2025-26) course resources by Prof. Vali Asimit & Ms Ziwei Chen.
+#   - Moodle practice files, adapted for our pipelines:
+#       'R_Practice_Section_1_CW_filled.Rmd' (rolling-window backtest)
+#       'R_Practice_Section_2_Part2_CW_Template_Filled.Rmd' (CV loop, metrics)
 #
 # Note to Vali and Ziwei:
 #   We originally planned to submit just an R file exported from this RMD,
@@ -131,15 +135,16 @@ cat("\014") # Clean console
 # --- Data Manipulation & Plotting ---
 library(tidyverse) # loads dplyr, tidyr, ggplot2, purrr (& others)
 library(patchwork) # for combining multiple plots into one figure
+library(readxl) # reading xlsx GICS sectors
 
 # --- Reporting & Tables ---
 library(kableExtra) # for general tables
 library(DT)         # for HTML interactive data tables
 library(plotly)     # for interactive html plots
-library(pander)     # for writing to pandoc
+library(pander)     # for writing to pandoc (kept for posterity)
 
 # --- Statistical Modelling & Mathematics ---
-library(MASS)      # Support functions and datasets for applied statistics
+# library(MASS)      # Support functions and datasets for applied statistics
 library(glm2)      # Fitting generalised linear models
 library(glmnet)    # Lasso and elastic-net
 library(splines)   # Regression spline functions
@@ -148,12 +153,6 @@ library(splines)   # Regression spline functions
 library(savvySh)   # Custom coursework package
 library(savvyPR)   # Custom coursework package
 library(savvyGLM)  # Custom coursework package
-
-# tmp ====
-library(readxl) # reading xlsx GICS sectors
-library(PerformanceAnalytics)
-library(xts)
-library(reshape2)
 
 # Estimator functions ====
 # St_MSh_, D_MSh_, O_LSh_, T_LSh_, Wang_, BOP_, Jorion_estimator
@@ -166,13 +165,14 @@ group_num <- 12 # seed 12 for group 12 ( ˶ˆᗜˆ˵ )
 set.seed(group_num)
 ## disable scientific notation ----
 options(scipen = 999) 
-options(knitr.kable.NA = "---") # all NA -> dashes 
+## set all NA's in tables to dashes ----
+options(knitr.kable.NA = "--") 
 ```
 
 ```{r custom-functions, include=FALSE, echo=FALSE}
 #---------------------------- Custom QOL functions ----------------------------#
 # BE Note: most of these are legacy functions from previous projects - just
-# keep them here to have all in one contained file.
+# kept them here to have all in one contained file.
 #####################################
 # function: format p-values for text
 # Usage (in-line): `r format_p_vals(ad_test_result$p.value)`
@@ -292,7 +292,7 @@ rf_raw$Date  <- as.Date(as.character(rf_raw$Date),  format = "%Y%m%d")
 
 ```{r a-data-prep, include=FALSE}
 ## (i) convert risk-free rate from percentage -> decimal  ----
-rf_dec    <- rf_raw # make quick copy
+rf_dec    <- rf_raw 
 rf_dec$RF <- rf_raw$RF / 100
 # align risk free rate to the return dates by date
 dat <- merge(ret_raw, rf_dec[, c("Date", "RF")], by = "Date")
@@ -762,7 +762,7 @@ for every estimator (Appendix \@ref(apx-cond)).
 For each window and each mean estimator, two portfolios are built: a
 mean-variance portfolio with risk aversion $\gamma = 1$, giving the unnormalised
 weights $w_{MV}$, and a tangency portfolio, the same vector rescaled to sum to
-one, $w_{TP}$,
+one, $w_{TP}$
 $$
 w_{MV} = \Sigma^{-1}\hat\mu \, ,
 \qquad
@@ -888,7 +888,7 @@ monthly over two decades [@Asimit15062026]. Using weekly excess returns for
 eight ways of estimating expected returns were compared, each paired with the
 `cov1Para` covariance estimator [@Ledoit2004365] and benchmarked against an
 equal-weight (1/N) portfolio. Every method was evaluated with a rolling window
-that mirrors live practice, fiting on the previous three years, testing on the
+that mirrors live practice, fitting on the previous three years, testing on the
 next unseen month, then advancing, giving `r n_windows` out-of-sample tests with
 no look-ahead bias. Performance was summarised by the annualised Sharpe ratio
 over the full period, the 2008 financial crisis, and the COVID-19 pandemic
@@ -1571,7 +1571,7 @@ errors, the Gamma deviance and the AE calibration ratio.
 kb <- kable(raw_tab,
   row.names = FALSE, booktabs = TRUE,
   digits = c(NA, 0, 0, 0, 0, 0, 0, 1, 4, 4, 3, 3, 1),
-  caption = "Raw out-of-sample performance: mean of each metric over all 500 evaluation runs. The best value per column is shown in green (lower is better for the error, deviance, time and iteration metrics, higher for the Gini indices, and closest to one for the AE ratio). NoIt counts IRLS iterations for GLM2 and savvyGLM but coordinate-descent passes for glmnet, so it is not comparable across those two families.",
+  caption = paste0("Raw out-of-sample performance: mean of each metric over all ", fmt(n_runs, 0), " evaluation runs. The best value per column is shown in green (lower is better for the error, deviance, time and iteration metrics, higher for the Gini indices, and closest to one for the AE ratio). NoIt counts IRLS iterations for GLM2 and savvyGLM but coordinate-descent passes for glmnet, so it is not comparable across those two families."),
   col.names = c(
     "Model", "RMSE", "MAE", "RMSE W99", "RMSE W95", "MAE W99",
     "MAE W95", "Dev.", "Gini raw", "Gini norm", "AE", "CT (s)",
@@ -1770,7 +1770,6 @@ kable(is_summary,
 ```
 
 ```{r b3-fig-panels, fig.cap = paste0("In-sample diagnostics for ", best_model, " on the full sample. Panel A: fitted against actual severity (log scales) for the unpenalised GLM2 baseline and the selected ", best_model, " model, with the dashed line marking perfect prediction. Panel B: ", best_model," deviance residuals against predicted severity."), fig.width=6, fig.height=5.5}
-# ( ˶ˆᗜˆ˵ )
 pa_df <- rbind(
   data.frame(Model = "GLM2 (baseline)", mu = mu_glm2, y = y_full),
   data.frame(Model = "RR (selected)", mu = mu_full, y = y_full)
@@ -2006,7 +2005,7 @@ $\hat\mu$, the scalar passes straight through to the weights,
 $$
 w_{MV}^{\text{St-MSh}}
   = \Sigma^{-1}(\hat c\,\bar X)
-  = \hat c\, w_{MV}^{\text{Sample}},
+  = \hat c\, w_{MV}^{\text{Sample}}
 $$
 and a portfolio's weekly returns scale with its weights,
 $r_t(\hat c\,w) = \hat c\, r_t(w)$. The Sharpe ratio is a ratio of a mean to a
@@ -2014,7 +2013,7 @@ standard deviation, so any positive constant cancels:
 $$
 \mathrm{SR}(\hat c\,w)
   = \frac{\hat c\,\bar r}{\hat c\, s_r}\sqrt{52}
-  = \mathrm{SR}(w).
+  = \mathrm{SR}(w)
 $$
 The two strategies therefore have the same Sharpe ratio in every window, hence
 the same mean and the same standard deviation across windows. 
@@ -2024,7 +2023,7 @@ weights themselves,
 $$
 w_{TP}^{\text{St-MSh}}
   = \frac{\hat c\,\Sigma^{-1}\bar X}{\hat c\,\mathbf 1^\top\Sigma^{-1}\bar X}
-  = w_{TP}^{\text{Sample}},
+  = w_{TP}^{\text{Sample}}
 $$
 As a result `TP_StMSh` and `TP_Sample` are the same portfolio with identical leverage, turnover and net-short windows, as seen in Tables \@ref(tab:cond-table) and
 \@ref(tab:scale-metrics). Since $\hat c > 0$, `St-MSh` also flips sign in exactly the same windows as the sample mean.
@@ -2700,22 +2699,67 @@ kable(conv_kbl,
 \newpage
 ```
 
-# Interactive R Shiny Dashboard {#apd-dashboard}
+# Interactive R Shiny dashboard {#apd-dashboard}
 
-To enable an interactive exploration of (stuff), an R Shiny dashboard was constructed
-and deployed to shinyapps.io. The application is available via:
+Since the rolling-window analysis in Part A depends on several choices that were
+fixed in the report (e.g., the group seed, the sample size, the training/testing
+window lengths, the risk-aversion parameter and the covariance estimator) a
+natural question is how sensitive the conclusions are to those choices. Rather
+than re-rendering the R Markdown document for each combination, we developed an
+interactive R Shiny dashboard that wraps the same estimator code
+(`All_eight_shrinkage_estimators.R`, `cov1Para.R`) and rolling-window engine
+used in the report, hosted on https://www.shinyapps.io/. The dashboard is
+available via:
 
-- TBC
+- https://3enji-apps.shinyapps.io/smm069-g12-part-a-dashboard/
 
-```{r appendix-dashboard-1, eval=FALSE, echo=FALSE, purl=FALSE, out.width="90%", fig.cap="TBI."}
-knitr::include_graphics("fig/appendix-dashboard-1.png")
+```{r appendix-dashboard-1, echo=FALSE, purl=FALSE, out.width="100%", fig.cap="Our R Shiny dashboard. Left: the Sample \\& GICS tab, with the four analysis tabs highlighted. Right: the rolling-window controls (training, testing and step lengths, risk aversion, covariance estimator and mean-vector estimators) and the button that triggers the rolling analysis."}
+knitr::include_graphics("fig/apx-dashboard-01.png")
 ```
 
+Figure \@ref(fig:appendix-dashboard-1) shows the R Shiny interface with the
+report's default settings (group 12, 100 companies). The dashboard is organised
+into four analysis tabs (Sample & GICS, Cumulative growth, Rolling performance,
+and Implementability). Each tab has the same sidebar of rolling-window controls:
+the training window, testing window and step (in weeks), the risk-aversion
+parameter $\gamma$, the covariance estimator (Ledoit–Wolf `cov1Para` or the
+sample covariance), and checkboxes to include or exclude any of the eight
+mean-vector estimators.
+
+The sample-size slider is capped at 80% of the training window because several
+mean estimators (e.g. `Jorion`) invert the sample covariance internally. The
+sample covariance is exactly singular for $p \ge n$ and numerically unusable
+well before that, so the cap applies even when `cov1Para` supplies the
+portfolio-weight covariance. We also added a comparison switch that overlays a second group's stocks in the first two tabs.
+
+The GICS and cumulative-growth tabs update instantly as the sample changes and
+the rolling analysis is gated behind a button. Figure
+\@ref(fig:appendix-dashboard-2) shows two of the interactive outputs. All plots
+are interactive and rendered with `plotly`. A strategy picker in the Rolling
+performance tab allows any subset of the mean–variance, tangency and
+equal-weighted portfolios to be compared window by window. A summary table
+reports the mean and standard deviation of per-window Sharpe ratios for the full
+period and both sub-periods.
+
+```{r appendix-dashboard-2, echo=FALSE, purl=FALSE, out.width="100%", fig.cap="Left: the Cumulative growth tab comparing the group sample against the full universe on a log scale. Right: the Rolling performance tab with per-window annualised Sharpe ratios for a user-selected subset of strategies.",  fig.pos="t"}
+knitr::include_graphics("fig/apx-dashboard-02.png")
+```
+
+Future extensions could include exporting run results, allowing for user-defined sub-period boundaries in place of the fixed Bai–Perron dates, and caching of completed runs so that different settings can be compared side by side without
+re-computation.
+
 <!-- BE note: taken out as we are submitting R file separately -->
-<!-- Use: `knitr::purl("cs1-group07.rmd", documentation = 0)` to generate r file -->
-<!-- Use: `tools::showNonASCIIfile("cs1-group07.rmd")` to debug -->
+<!-- Use: `knitr::purl("filename.rmd", documentation = 0)` to generate r file -->
+<!-- Use: `tools::showNonASCIIfile("filename.rmd")` to debug -->
 <!-- ## R Code Documentation -->
 <!-- ```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}``` -->
+
+
+```{=latex}
+\newpage
+```
+
+# Reproducibility and generative AI declaration
 
 ## Reproducibility & accessibility
 
@@ -2733,7 +2777,7 @@ the same repository (https://github.com/ytterbiu/smm069-assignment_g12/commits/m
 updates made to the project repository and is not a comprehensive timeline of
 all contributions by group members.
 
-# Generative AI declaration {#apd:genai}
+## Generative AI declaration {#apd:genai}
 
 Generative AI (GenAI) tools were used throughout this project to assist with
 project planning, methodological validation, debugging, and the development of
@@ -2742,11 +2786,11 @@ the supplementary interactive dashboard described in Appendix
 technical resource, providing immediate feedback, troubleshooting code, and
 discussing conceptual assumptions.
 
-## Tools used {-}
+### Tools used {-}
 
 Google Gemini 3 Pro (Deep Research), Claude (Anthropic) Opus 4.8 & Fable 5.
 
-## Prompts used {-}
+### Prompts used {-}
 
 The GenAI tools were provided with the coursework task sheet and
 extracts from our R code.
@@ -2765,7 +2809,7 @@ similar to querying with a traditional search engine).
   invalid character. l.1 ^^@^^@...`"
 - "Are there any issues with this app code? Suggest corrections for any potential bugs or errors within the server side code" 
 
-## Use of GenAI outputs & subsequent revisions {-}
+### Use of GenAI outputs & subsequent revisions {-}
 
 The GenAI tools served as a consultative resource for the group. Notably, the AI
 output:
@@ -2776,7 +2820,7 @@ output:
 - Reviewed elements of the R Shiny app code, identifying bugs and
   design issues.
 
-## Changes made {-}
+### Changes made {-}
 
 All AI suggestions were critically reviewed and debated by the group before
 implementation. For example:
@@ -2794,6 +2838,10 @@ implementation. For example:
 While GenAI was treated as a collaborator, the final analysis, statistical
 interpretation, and the written content of this report were generated and
 verified by all group members.
+
+```{=latex}
+\newpage
+```
 
 <!-- [^utility-theory]: -->
 <!--     Described in more detail in the appendix (\S\@ref(apd-utility-theory)). -->
