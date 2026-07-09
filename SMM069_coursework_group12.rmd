@@ -1431,6 +1431,25 @@ decile_tab <- data.frame(y = y_full, mu = mu_full) |>
     `AE ratio` = sum(y) / sum(mu),
     .groups = "drop"
   )
+
+# Values for the B3 prose
+pred_lo <- min(mu_full)
+pred_hi <- max(mu_full)
+pred_span <- pred_hi - pred_lo
+act_lo <- min(y_full)
+act_hi <- max(y_full)
+dec_pred_first <- decile_tab$`Mean predicted`[1]
+dec_pred_last  <- decile_tab$`Mean predicted`[nrow(decile_tab)]
+dec_act_min <- min(decile_tab$`Mean actual`)
+dec_act_max <- max(decile_tab$`Mean actual`)
+dec_ae_lo9  <- min(decile_tab$`AE ratio`[-nrow(decile_tab)])
+dec_ae_hi9  <- max(decile_tab$`AE ratio`[-nrow(decile_tab)])
+dec_ae_top  <- decile_tab$`AE ratio`[nrow(decile_tab)]
+
+# GLM2 comparison fit for the figure (deterministic, no internal randomness)
+mu_glm2 <- exp(as.numeric(
+  X_full %*% fit_model_coefs("GLM2", X_full, y_full, w_full)
+))
 ```
 
 ---
@@ -1630,7 +1649,7 @@ computation time. This ordering is consistent with the evidence in
 @Asimit2025GLMsolsviaShrinkage, which finds ridge regression dominant under
 the log link used here in both simulation and the freMTPL2 application.
 
-## Model comparison and selection (B2) {#b-b2}
+## Model comparison and selection {#b-b2}
 
 With no model showing out-of-sample ranking power (Section \@ref(b1-raw)),
 selection rests on tail-robust accuracy, deviance and calibration. On that basis
@@ -1654,10 +1673,176 @@ maximum-likelihood targets that inherit the noise, the regime in which
 @Asimit2025GLMsolsviaShrinkage likewise find ridge dominant under the log
 link. RR's computation time, under a second per fit, is immaterial.
 
+## In-sample performance analysis {#b-b3}
 
-<!-- # Conclusions
+The chosen model, `r best_model`, was refitted to the full sample of
+`r fmt(n_pol, 0)` policies. The preprocessing described in Section
+\@ref(b-prep) was applied unchanged, with the splines, leave-one-out target
+encoding and standardisation now learned from all `r fmt(n_pol, 0)` rows and
+the penalty re-selected by `cv.glmnet` under our group seed (`r group_num`) so
+that the fit was stable between knits. Its fitted severities $\hat y_i$ are
+compared with the observed claims $y_i$ below.
 
-TBI -->
+```{r b3-insample-summary, include=FALSE}
+# BE note: note that this is dependent upon is_dev_null
+# It's also a duplication or b3-insample.  
+# Need to update in two places currently - look to fix in future
+# 
+# In-sample metrics for the selected model and the unpenalised baseline,
+# computed on the same full-sample fit used in the figure below.
+is_metrics <- function(mu) {
+  dev <- sum(w_full * Gamma()$dev.resids(y_full, mu, 1))
+  c(
+    RMSE = sqrt(mean((y_full - mu)^2)),
+    MAE = mean(abs(y_full - mu)),
+    AE = sum(y_full * w_full) / sum(mu * w_full),
+    Gini = NormalisedWeightedGini(y_full, w_full, mu),
+    PseudoR2 = 1 - dev / is_dev_null
+  )
+}
+m_rr <- is_metrics(mu_full)
+m_g2 <- is_metrics(mu_glm2)
+
+is_summary <- data.frame(
+  Metric = c(
+    "RMSE (EUR)", "MAE (EUR)", "AE ratio", "Normalised Gini",
+    "Deviance reduction vs intercept-only"
+  ),
+  RR = c(
+    fmt(m_rr["RMSE"], 0), fmt(m_rr["MAE"], 0), fmt(m_rr["AE"], 3),
+    fmt(m_rr["Gini"], 3), paste0(fmt(100 * m_rr["PseudoR2"], 1), "%")
+  ),
+  GLM2 = c(
+    fmt(m_g2["RMSE"], 0), fmt(m_g2["MAE"], 0), fmt(m_g2["AE"], 3),
+    fmt(m_g2["Gini"], 3), paste0(fmt(100 * m_g2["PseudoR2"], 1), "%")
+  ),
+  check.names = FALSE
+)
+```
+
+At the portfolio level the model is almost perfectly calibrated. The
+actual-to-expected ratio is `r fmt(is_ae, 3)`, so total predicted severity
+matches total observed severity to within `r fmt(100 * abs(is_ae - 1), 1)`%.
+Beneath that aggregate, however, the model differentiates very little. The
+Gamma deviance falls only `r fmt(100 * is_pseudoR2, 1)`% below the
+intercept-only model, and the `r fmt(n_pol, 0)` fitted severities span a band
+of roughly `r fmt(pred_span, 0)` euros (€`r fmt(pred_lo, 0)` to
+€`r fmt(pred_hi, 0)`) around the portfolio mean, against actual claims ranging
+from €`r fmt(act_lo, 0)` to €`r fmt(act_hi, 0)`. Fitted to all
+`r fmt(n_pol, 0)` rows, `cv.glmnet` selects a heavy penalty and shrinks the
+model nearly to the intercept. This is the in-sample face of the selection
+argument in \@ref(b-b2). With almost no rankable severity signal, the
+loss-minimising fit sits close to a constant. `r best_model` won the
+out-of-sample comparison precisely because it declines to fit noise. Absolute
+errors remain large (RMSE `r fmt(is_rmse, 0)`, MAE `r fmt(is_mae, 0)`), an
+unavoidable feature of individual-level severity, where most of the variance is
+claim-level randomness that is not predictable from any policyholder
+characteristic present in the data.
+
+Table \@ref(tab:b3-summary-table) places the in-sample metrics beside the
+unpenalised `GLM2` baseline fitted to the same rows. `GLM2` posts the lower
+in-sample RMSE, the larger deviance reduction and the higher normalised Gini,
+yet Table \@ref(tab:b1-raw-table) showed it losing to `r best_model` on all the
+error metrics. The additional in-sample fit that `GLM2` achieves does not
+generalise, which is the clearest demonstration of what the ridge penalty
+removes. `GLM2` also miscalibrates in aggregate (AE
+`r fmt(m_g2["AE"], 3)`), over-predicting total severity by 
+`r fmt(100 * abs(m_g2["AE"] - 1), 1)`%, so the penalty improves the portfolio 
+level as well as the policy level.
+
+```{r b3-summary-table}
+kable(is_summary,
+  booktabs = TRUE, 
+  row.names = FALSE, 
+  align = c("l", "r", "r"),
+  col.names = c("Metric", best_model, "GLM2"),
+  caption = paste0(
+    "In-sample performance of the selected ", best_model,
+    " model and the unpenalised GLM2 baseline, both fitted to all ",
+    fmt(n_pol, 0), " policies. GLM2 fits the sample more closely on every ",
+    "measure, but that additional fit does not survive out of sample."
+  )
+) |>
+  kable_styling(
+    full_width = FALSE, position = "center",
+    latex_options = "hold_position"
+  )
+```
+
+```{r b3-fig-panels, fig.cap = paste0("In-sample diagnostics for ", best_model, " on the full sample. Panel A: fitted against actual severity (log scales) for the unpenalised GLM2 baseline and the selected ", best_model, " model, with the dashed line marking perfect prediction. Panel B: ", best_model," deviance residuals against predicted severity."), fig.width=6, fig.height=5.5}
+# ( ˶ˆᗜˆ˵ )
+pa_df <- rbind(
+  data.frame(Model = "GLM2 (baseline)", mu = mu_glm2, y = y_full),
+  data.frame(Model = "RR (selected)", mu = mu_full, y = y_full)
+)
+p_pa <- ggplot(pa_df, aes(mu, y)) +
+  geom_point(alpha = .3, size = .8, colour = "#0072B2") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  scale_x_log10(labels = scales::comma) +
+  scale_y_log10(labels = scales::comma) +
+  facet_wrap(~Model) +
+  labs(x = "Predicted severity (EUR, log scale)", y = "Actual severity (EUR, log scale)") +
+  theme_minimal()
+p_res <- ggplot(data.frame(mu = mu_full, r = dev_res), aes(mu, r)) +
+  geom_hline(yintercept = 0, linewidth = .3) +
+  geom_point(alpha = .3, size = .8, colour = "#0072B2") +
+  scale_x_continuous(labels = scales::comma) +
+  labs(x = "Predicted severity, RR (EUR)", y = "Deviance residual") +
+  theme_minimal()
+p_pa / p_res + plot_layout(heights = c(1.2, 1)) + plot_annotation(tag_levels = "A")
+```
+
+Figure \@ref(fig:b3-fig-panels) illustrates these points visually by placing
+`r best_model` beside the unpenalised `GLM2` fitted to the same data. `GLM2`
+spreads its predictions across an order of magnitude while `r best_model`
+compresses them to a narrow vertical band. However, Table
+\@ref(tab:b1-raw-table) shows that the wider spread carries no out-of-sample
+ranking power. It is fitted noise, and removing it is exactly what the penalty
+is for. Panel B plots the deviance residuals. With near-constant predictions
+these display the dispersion of individual claims around a single level, rather
+than acting as a diagnostic of the link specification. The cloud is centred on
+zero with the positive skew of the severity tail.
+
+```{r b3-decile-table}
+kable(decile_tab,
+  booktabs = TRUE, digits = c(0, 0, 0, 0, 3),
+  align = c("c", "c", "c", "c", "c"),
+  col.names = c(
+    "Decile", "N", "Mean predicted (EUR)",
+    "Mean actual (EUR)", "AE ratio"
+  ),
+  caption = paste0(
+    "In-sample calibration of ", best_model,
+    " by decile of predicted severity, with the decile actual-to-expected ratio."
+  )
+) |>
+  kable_styling(
+    full_width = FALSE, position = "center",
+    latex_options = "hold_position"
+  )
+```
+
+Table \@ref(tab:b3-decile-table) sorts policies into deciles of predicted
+severity. Mean predicted severity is essentially flat, rising from
+€`r fmt(dec_pred_first, 0)` in the bottom decile to €`r fmt(dec_pred_last, 0)` 
+in the top, while mean actual severity swings from €`r fmt(dec_act_min, 0)` to
+€`r fmt(dec_act_max, 0)`. The decile AE ratios are patternless across the lower
+nine deciles (`r fmt(dec_ae_lo9, 2)` to `r fmt(dec_ae_hi9, 2)`) before jumping
+to `r fmt(dec_ae_top, 2)` in the top decile. With a near-constant predictor,
+decile membership mostly slices noise, and the top decile happens to capture a
+cluster of large claims. That cluster is the sole source of the modest
+in-sample normalised Gini of `r fmt(is_gini, 3)`, a figure that fails to
+survive out of sample, where every model's Gini is negative.
+
+At this volume, average claim severity is best rated near-flat. In the standard
+frequency-severity decomposition, risk differentiation is carried by the
+frequency model, and exposure to the largest claims is managed through
+large-claim loadings or layered reinsurance rather than the policy-level
+severity model. As such, `r best_model`'s behaviour is not a defect but the
+coherent endpoint of the analysis. It is an almost perfectly calibrated
+aggregate level, and an honest refusal to manufacture differentiation the data
+cannot support.
+
 
 <!-- ```{=html} -->
 <!-- # References -->
