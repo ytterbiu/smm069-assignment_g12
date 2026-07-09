@@ -9,6 +9,8 @@ within the same document.
 
 > [!IMPORTANT]
 > HTML report: https://ytterbiu.github.io/smm069-assignment_g12/
+
+> [!NOTE]
 > R Shiny app for part A: https://3enji-apps.shinyapps.io/smm069-g12-part-a-dashboard/
 
 ## Formatting guide
