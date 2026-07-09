@@ -9,6 +9,7 @@ within the same document.
 
 > [!IMPORTANT]
 > HTML report: https://ytterbiu.github.io/smm069-assignment_g12/
+> R Shiny app for part A: https://3enji-apps.shinyapps.io/smm069-g12-part-a-dashboard/
 
 ## Formatting guide
 
@@ -28,7 +29,6 @@ The directory structure is as follows
 
 ```{bash}
 .
-├── CHANGELOG.md
 ├── README.md
 ├── air.toml
 ├── answer.lua
@@ -38,10 +38,15 @@ The directory structure is as follows
 ├── data
 │   ├── DA441_GICS_Sectors.xlsx
 │   ├── DA441_weekly_returns.csv
+│   ├── final_results.rds
+│   ├── freMTPL2freq.csv
+│   ├── freMTPL2sev.csv
 │   └── risk_free_rate_weekly.csv
+├── preamble-local.tex
 ├── preamble.tex
 ├── references.bib
-└── style.css
+├── style.css
+├── style_code.lua
 ```
 
 ## Requirements
@@ -57,11 +62,33 @@ install.packages("rmarkdown")
 
 Additional packages used are
 
-```{r}
-TBI
+```r
+install.packages(c(
+  # Data manipulation & plotting
+  "tidyverse",   # dplyr, tidyr, ggplot2, purrr, ...
+  "patchwork",   # combining plots
+  "readxl",      # GICS sectors xlsx
+  # Reporting & tables
+  "kableExtra",  # static tables
+  "DT",          # interactive HTML tables
+  "plotly",      # interactive HTML plots
+  "pander",      # pandoc output (kept for posterity)
+  # Statistical modelling
+  "glm2",        # GLM fitting
+  "glmnet",      # lasso / elastic net
+  "shiny"        # dashboard (Appendix only)
+))
+# splines ships with base R
 ```
 
-- Optional packages: `htmltools` (required only if rendering to HTML)
+Course-specific packages (from the course-provided sources):
+
+```r
+# savvySh, savvyPR, savvyGLM
+```
+
+The Rmd also sources two local scripts, which must sit alongside it:
+`All_eight_shrinkage_estimators.R` and `cov1Para.R`.
 
 ## Useful operations
 
@@ -123,4 +150,23 @@ sessionInfo()
 
 ## References
 
-TBI
+- Asimit, V., Chen, Z. & Lassance, N. (2026). *Journal of Business & Economic
+  Statistics*. <https://doi.org/10.1080/07350015.2026.2638490> — mean-vector
+  shrinkage estimators (Coursework 1).
+- Asimit, V., Avramescu, A., Chen, Z., Rivas, S. & Senatore, G. (2025).
+  Technical report, City St George's, University of London.
+  <https://openaccess.city.ac.uk/id/eprint/35099> — shrinkage GLMs /
+  `savvyGLM` (Coursework 2).
+- Full bibliography: see `references.bib` and the References section of the
+  report.
+
+## Acknowledgements
+
+- SMM069 (2025–26) course resources by Prof. Vali Asimit and Ms Ziwei Chen,
+  including the custom packages `savvySh`, `savvyPR` and `savvyGLM` and the
+  estimator scripts `All_eight_shrinkage_estimators.R` and `cov1Para.R`.
+- Moodle practice files, adapted for our pipelines:
+  - `R_Practice_Section_1_CW_filled.Rmd` (rolling-window backtest)
+  - `R_Practice_Section_2_Part2_CW_Template_Filled.Rmd` (CV loop, metrics)
+- The `freMTPL2freq` / `freMTPL2sev` datasets originate from the
+  `CASdatasets` package (Dutang & Charpentier).
